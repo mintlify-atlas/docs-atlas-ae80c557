@@ -1,0 +1,502 @@
+---
+title: 'Built-in Redis Modules'
+description: 'JSON, Search, TimeSeries, and Bloom modules included with Redis'
+---
+
+Redis includes several built-in modules that extend its functionality with specialized data types and processing capabilities. These modules require compiling Redis with the `BUILD_WITH_MODULES=yes` flag.
+
+<Warning>
+**Compilation Requirement**
+
+Built-in modules are only available when Redis is compiled with:
+
+```bash
+make BUILD_WITH_MODULES=yes
+```
+
+See the [Build from Source](/build/from-source) guide for platform-specific instructions.
+</Warning>
+
+## Available Built-in Modules
+
+When compiled with `BUILD_WITH_MODULES=yes`, Redis includes:
+
+- **RedisJSON** - Native JSON document storage with JSONPath queries
+- **RediSearch** - Full-text search, secondary indexing, and query engine
+- **RedisTimeSeries** - Time-series data storage with downsampling and aggregation
+- **RedisBloom** - Probabilistic data structures (Bloom filters, Cuckoo filters, Count-Min sketch, Top-K)
+
+## Module Structure
+
+The built-in modules are located in the `modules/` directory:
+
+```
+modules/
+├── redisjson/      # JSON module
+├── redisearch/     # Search and query engine
+├── redistimeseries/# Time-series module
+├── redisbloom/     # Probabilistic data structures
+└── vector-sets/    # Vector similarity search
+```
+
+## RedisJSON
+
+Stores, updates, and queries JSON documents as native Redis data types.
+
+### Features
+
+- JSONPath syntax for querying and manipulation
+- Atomic operations on JSON documents
+- Integration with RediSearch for indexing
+- Efficient memory representation
+
+### Example Commands
+
+```bash
+# Store a JSON document
+JSON.SET user:1 $ '{"name":"Alice","age":30,"email":"alice@example.com"}'
+
+# Get the entire document
+JSON.GET user:1
+# Returns: {"name":"Alice","age":30,"email":"alice@example.com"}
+
+# Get a specific field
+JSON.GET user:1 $.name
+# Returns: ["Alice"]
+
+# Update a field
+JSON.SET user:1 $.age 31
+
+# Increment a numeric field
+JSON.NUMINCRBY user:1 $.age 1
+
+# Append to an array
+JSON.ARRAPPEND user:1 $.tags '"premium"'
+
+# Delete a field
+JSON.DEL user:1 $.email
+```
+
+### Key Commands
+
+- `JSON.SET` - Set JSON document or value
+- `JSON.GET` - Get JSON document or value
+- `JSON.DEL` - Delete JSON document or value
+- `JSON.NUMINCRBY` - Increment number value
+- `JSON.ARRAPPEND` - Append to array
+- `JSON.ARRPOP` - Pop from array
+- `JSON.OBJKEYS` - Get object keys
+- `JSON.TYPE` - Get type of value
+
+## RediSearch
+
+Provides full-text search, secondary indexes, and a query engine for Redis data.
+
+### Features
+
+- Full-text search with stemming and fuzzy matching
+- Secondary indexes on hash and JSON documents
+- Vector similarity search
+- Geospatial queries
+- Aggregations and grouping
+- Phonetic matching
+
+### Example: Creating an Index
+
+```bash
+# Create index on hash documents
+FT.CREATE idx:users ON HASH PREFIX 1 user: SCHEMA
+  name TEXT SORTABLE
+  email TAG
+  age NUMERIC SORTABLE
+  location GEO
+
+# Add documents (as hashes)
+HSET user:1 name "Alice Smith" email "alice@example.com" age 30
+HSET user:2 name "Bob Jones" email "bob@example.com" age 25
+
+# Search for users
+FT.SEARCH idx:users "Alice"
+
+# Search with filters
+FT.SEARCH idx:users "*" FILTER age 25 35
+
+# Search and sort
+FT.SEARCH idx:users "*" SORTBY age ASC
+```
+
+### Example: JSON Index
+
+```bash
+# Create index on JSON documents
+FT.CREATE idx:products ON JSON PREFIX 1 product: SCHEMA
+  $.name AS name TEXT
+  $.price AS price NUMERIC
+  $.category AS category TAG
+  $.location AS location GEO
+
+# Add JSON documents
+JSON.SET product:1 $ '{"name":"Laptop","price":999.99,"category":"electronics"}'
+JSON.SET product:2 $ '{"name":"Desk","price":299.99,"category":"furniture"}'
+
+# Search
+FT.SEARCH idx:products "laptop"
+
+# Aggregations
+FT.AGGREGATE idx:products "*"
+  GROUPBY 1 @category
+  REDUCE AVG 1 @price AS avg_price
+```
+
+### Key Commands
+
+- `FT.CREATE` - Create index
+- `FT.SEARCH` - Search index
+- `FT.AGGREGATE` - Run aggregation query
+- `FT.SUGADD` - Add suggestion
+- `FT.SUGGET` - Get suggestions
+- `FT.INFO` - Get index info
+- `FT.DROPINDEX` - Drop index
+
+## RedisTimeSeries
+
+Stores and queries time-series data with automatic downsampling and aggregations.
+
+### Features
+
+- High-performance time-series data storage
+- Automatic downsampling with configurable aggregations
+- Retention policies
+- Compaction rules
+- Range queries with aggregations
+- Labels for filtering and grouping
+
+### Example Commands
+
+```bash
+# Create time series
+TS.CREATE temperature:sensor1
+  RETENTION 86400000
+  LABELS sensor_id 1 location warehouse
+
+# Add samples
+TS.ADD temperature:sensor1 * 22.5
+TS.ADD temperature:sensor1 * 23.1
+TS.ADD temperature:sensor1 * 22.8
+
+# Add multiple samples
+TS.MADD temperature:sensor1 1609459200000 21.5
+        temperature:sensor1 1609459260000 22.0
+        temperature:sensor1 1609459320000 22.3
+
+# Query range
+TS.RANGE temperature:sensor1 1609459200000 1609462800000
+
+# Query with aggregation
+TS.RANGE temperature:sensor1 1609459200000 1609462800000
+  AGGREGATION avg 3600000  # 1-hour buckets
+
+# Create downsampling rule
+TS.CREATE temperature:sensor1:hourly
+TS.CREATERULE temperature:sensor1 temperature:sensor1:hourly
+  AGGREGATION avg 3600000
+
+# Query by labels
+TS.MGET FILTER location=warehouse
+
+# Multi-range query
+TS.MRANGE 1609459200000 1609462800000
+  AGGREGATION avg 3600000
+  FILTER location=warehouse
+```
+
+### Key Commands
+
+- `TS.CREATE` - Create time series
+- `TS.ADD` - Add sample
+- `TS.MADD` - Add multiple samples
+- `TS.RANGE` - Query range
+- `TS.MRANGE` - Multi-series range query
+- `TS.GET` - Get latest sample
+- `TS.MGET` - Get latest from multiple series
+- `TS.CREATERULE` - Create compaction rule
+- `TS.INFO` - Get series info
+
+## RedisBloom
+
+Probabilistic data structures for approximate membership and counting.
+
+### Bloom Filter
+
+Tests whether an element is a member of a set with tunable false positive rate.
+
+```bash
+# Create Bloom filter
+BF.RESERVE emails 0.001 10000
+# Error rate: 0.1%, capacity: 10,000 items
+
+# Add items
+BF.ADD emails "alice@example.com"
+BF.MADD emails "bob@example.com" "charlie@example.com"
+
+# Check membership
+BF.EXISTS emails "alice@example.com"
+# Returns: 1 (probably exists)
+
+BF.EXISTS emails "unknown@example.com"
+# Returns: 0 (definitely does not exist)
+
+# Check multiple
+BF.MEXISTS emails "alice@example.com" "unknown@example.com"
+# Returns: [1, 0]
+```
+
+### Cuckoo Filter
+
+Similar to Bloom filter but supports deletion.
+
+```bash
+# Create Cuckoo filter
+CF.RESERVE usernames 10000
+
+# Add items
+CF.ADD usernames "alice"
+CF.ADDNX usernames "bob"  # Add only if not exists
+
+# Check membership
+CF.EXISTS usernames "alice"
+
+# Delete item
+CF.DEL usernames "alice"
+
+# Count occurrences (approximate)
+CF.COUNT usernames "bob"
+```
+
+### Count-Min Sketch
+
+Estimates frequency of items in a stream.
+
+```bash
+# Create Count-Min Sketch
+CMS.INITBYDIM page_views 1000 5
+# Width: 1000, depth: 5
+
+# Increment counters
+CMS.INCRBY page_views /home 1
+CMS.INCRBY page_views /products 1
+CMS.INCRBY page_views /home 1
+
+# Query count
+CMS.QUERY page_views /home
+# Returns: 2 (approximate)
+
+# Query multiple
+CMS.QUERY page_views /home /products /about
+# Returns: [2, 1, 0]
+```
+
+### Top-K
+
+Tracks top K most frequent items.
+
+```bash
+# Create Top-K
+TOPK.RESERVE trending 10 1000 5 0.9
+# k=10, width=1000, depth=5, decay=0.9
+
+# Add items
+TOPK.ADD trending "apple" "banana" "apple" "cherry" "apple"
+
+# Query if item is in top-k
+TOPK.QUERY trending "apple"
+# Returns: 1 (yes)
+
+# List top-k items
+TOPK.LIST trending
+# Returns: ["apple", "banana", "cherry", ...]
+
+# List with counts
+TOPK.LIST trending WITHCOUNT
+# Returns: ["apple", 3, "banana", 1, "cherry", 1, ...]
+```
+
+### Key Commands
+
+**Bloom Filter:**
+- `BF.RESERVE` - Create filter
+- `BF.ADD` - Add item
+- `BF.MADD` - Add multiple items
+- `BF.EXISTS` - Check membership
+- `BF.MEXISTS` - Check multiple
+
+**Cuckoo Filter:**
+- `CF.RESERVE` - Create filter
+- `CF.ADD` - Add item
+- `CF.EXISTS` - Check membership
+- `CF.DEL` - Delete item
+- `CF.COUNT` - Count occurrences
+
+**Count-Min Sketch:**
+- `CMS.INITBYDIM` - Create sketch
+- `CMS.INCRBY` - Increment counter
+- `CMS.QUERY` - Query count
+- `CMS.MERGE` - Merge sketches
+
+**Top-K:**
+- `TOPK.RESERVE` - Create Top-K
+- `TOPK.ADD` - Add items
+- `TOPK.QUERY` - Query membership
+- `TOPK.LIST` - List top items
+- `TOPK.COUNT` - Count item
+
+## Module Configuration
+
+When running Redis with built-in modules, use the `redis-full.conf` configuration:
+
+```bash
+redis-server redis-full.conf
+```
+
+This configuration automatically loads all built-in modules.
+
+### Manual Loading
+
+You can also load modules individually:
+
+```bash
+redis-server --loadmodule /path/to/redisjson.so
+             --loadmodule /path/to/redisearch.so
+             --loadmodule /path/to/redistimeseries.so
+             --loadmodule /path/to/redisbloom.so
+```
+
+### Checking Loaded Modules
+
+```bash
+redis-cli MODULE LIST
+```
+
+Output:
+```
+1) 1) "name"
+   2) "ReJSON"
+   3) "ver"
+   4) (integer) 20000
+2) 1) "name"
+   2) "search"
+   3) "ver"
+   4) (integer) 20400
+3) 1) "name"
+   2) "timeseries"
+   3) "ver"
+   4) (integer) 11000
+4) 1) "name"
+   2) "bf"
+   3) "ver"
+   4) (integer) 20205
+```
+
+## Use Cases
+
+### E-commerce Application
+
+```bash
+# Store product catalog as JSON
+JSON.SET product:1 $ '{"name":"Laptop","price":999,"category":"electronics","tags":["portable","work"]}'
+
+# Create search index
+FT.CREATE idx:products ON JSON PREFIX 1 product: SCHEMA
+  $.name AS name TEXT
+  $.price AS price NUMERIC
+  $.category AS category TAG
+
+# Track page views with Count-Min Sketch
+CMS.INCRBY views product:1 1
+
+# Track trending products with Top-K
+TOPK.ADD trending product:1
+
+# Deduplicate viewed products with Bloom filter
+BF.ADD user:123:viewed product:1
+```
+
+### IoT Monitoring
+
+```bash
+# Create time series for sensor data
+TS.CREATE sensor:temp:1
+  RETENTION 604800000  # 7 days
+  LABELS sensor_id 1 type temperature room kitchen
+
+# Add readings
+TS.ADD sensor:temp:1 * 22.5
+
+# Create hourly aggregation
+TS.CREATE sensor:temp:1:hourly
+TS.CREATERULE sensor:temp:1 sensor:temp:1:hourly AGGREGATION avg 3600000
+
+# Query recent data
+TS.RANGE sensor:temp:1 - + LATEST
+
+# Query all sensors in kitchen
+TS.MGET FILTER room=kitchen
+```
+
+### Social Media Analytics
+
+```bash
+# Store user profiles as JSON
+JSON.SET user:1 $ '{"username":"alice","followers":1500,"posts":[]}}'
+
+# Track unique visitors with HyperLogLog (Redis core)
+PFADD visitors:today user:1 user:2 user:3
+PFCOUNT visitors:today
+
+# Track trending hashtags with Top-K
+TOPK.ADD trending:hashtags "#redis" "#database" "#redis"
+
+# Deduplicate content with Bloom filter
+BF.ADD seen:posts "post:12345"
+```
+
+## Performance Considerations
+
+<Warning>
+**Memory Usage**
+
+Built-in modules increase memory usage. Monitor with:
+
+```bash
+redis-cli INFO memory
+redis-cli MEMORY USAGE key
+```
+</Warning>
+
+### Best Practices
+
+1. **Use appropriate retention policies** for time-series data
+2. **Size Bloom filters correctly** - balance false positive rate vs memory
+3. **Create indexes selectively** - only index fields you query
+4. **Use downsampling** for long-term time-series storage
+5. **Monitor module memory** with INFO commands
+
+## Documentation
+
+For detailed documentation on each module:
+
+- [RedisJSON Documentation](https://redis.io/docs/latest/develop/data-types/json/)
+- [RediSearch Documentation](https://redis.io/docs/latest/develop/interact/search-and-query/)
+- [RedisTimeSeries Documentation](https://redis.io/docs/latest/develop/data-types/timeseries/)
+- [RedisBloom Documentation](https://redis.io/docs/latest/develop/data-types/probabilistic/)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module API Overview" icon="book" href="/modules/overview">
+    Learn about the modules API
+  </Card>
+  <Card title="Create Custom Modules" icon="code" href="/modules/getting-started">
+    Build your own Redis module
+  </Card>
+</CardGroup>

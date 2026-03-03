@@ -1,0 +1,293 @@
+---
+title: Sets
+description: Unordered collections of unique strings with powerful set operations
+---
+
+Redis sets are unordered collections of unique strings. They provide O(1) membership testing and efficient set operations like intersection, union, and difference.
+
+## Use Cases
+
+- **Tagging systems**: Tag articles, products, or users
+- **Unique visitors**: Track unique IP addresses or user IDs
+- **Social graphs**: Followers, following, friends lists
+- **Voting systems**: Track who voted on what
+- **Access control**: User permissions and roles
+- **Random selection**: Pick random winners or samples
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Add members to set
+redis> SADD myset "apple" "banana" "cherry"
+(integer) 3
+
+# Add duplicate (ignored)
+redis> SADD myset "apple"
+(integer) 0
+
+# Get all members
+redis> SMEMBERS myset
+1) "banana"
+2) "cherry"
+3) "apple"
+
+# Get cardinality
+redis> SCARD myset
+(integer) 3
+
+# Check membership
+redis> SISMEMBER myset "banana"
+(integer) 1
+redis> SISMEMBER myset "grape"
+(integer) 0
+```
+
+### Set Operations
+
+```bash
+# Create two sets
+redis> SADD set1 "a" "b" "c" "d"
+(integer) 4
+redis> SADD set2 "c" "d" "e" "f"
+(integer) 4
+
+# Intersection
+redis> SINTER set1 set2
+1) "c"
+2) "d"
+
+# Union
+redis> SUNION set1 set2
+1) "a"
+2) "b"
+3) "c"
+4) "d"
+5) "e"
+6) "f"
+
+# Difference
+redis> SDIFF set1 set2
+1) "a"
+2) "b"
+
+# Store result
+redis> SINTERSTORE result set1 set2
+(integer) 2
+```
+
+### Random Operations
+
+```bash
+# Get random member
+redis> SRANDMEMBER myset
+"cherry"
+
+# Get multiple random members (with possible duplicates)
+redis> SRANDMEMBER myset 3
+1) "apple"
+2) "banana"
+3) "cherry"
+
+# Get unique random members
+redis> SRANDMEMBER myset -3
+1) "banana"
+2) "cherry"
+3) "apple"
+
+# Pop random member
+redis> SPOP myset
+"banana"
+```
+
+### Removal
+
+```bash
+# Remove specific members
+redis> SREM myset "apple" "banana"
+(integer) 2
+
+# Move member between sets
+redis> SMOVE myset otherset "cherry"
+(integer) 1
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| SADD | O(1) per member | Add members |
+| SREM | O(N) | N=members to remove |
+| SISMEMBER | O(1) | Check membership |
+| SCARD | O(1) | Get cardinality |
+| SMEMBERS | O(N) | N=set cardinality |
+| SINTER | O(N*M) | N=smallest set, M=sets |
+| SUNION | O(N) | N=total members |
+| SDIFF | O(N) | N=total members |
+| SPOP | O(1) | Remove random |
+| SRANDMEMBER | O(1) | Get random |
+
+## Patterns and Examples
+
+### Tagging System
+
+```bash
+# Add tags to articles
+redis> SADD article:123:tags "redis" "database" "nosql"
+(integer) 3
+redis> SADD article:456:tags "redis" "caching" "performance"
+(integer) 3
+
+# Find articles tagged with "redis"
+redis> SADD tag:redis:articles "article:123" "article:456"
+(integer) 2
+redis> SMEMBERS tag:redis:articles
+1) "article:123"
+2) "article:456"
+
+# Find articles with both "redis" AND "performance"
+redis> SINTER tag:redis:articles tag:performance:articles
+1) "article:456"
+```
+
+### Unique Visitors
+
+```bash
+# Track unique visitors per day
+redis> SADD visitors:2024-03-03 "user:123"
+(integer) 1
+redis> SADD visitors:2024-03-03 "user:456"
+(integer) 1
+redis> SADD visitors:2024-03-03 "user:123"
+(integer) 0
+
+# Get unique visitor count
+redis> SCARD visitors:2024-03-03
+(integer) 2
+
+# Find visitors who came back today
+redis> SINTER visitors:2024-03-02 visitors:2024-03-03
+1) "user:123"
+```
+
+### Social Graph - Friend Recommendations
+
+```bash
+# User's friends
+redis> SADD friends:user:123 "user:456" "user:789"
+(integer) 2
+
+# Friend's friends
+redis> SADD friends:user:456 "user:789" "user:999"
+(integer) 2
+
+# Find potential friends (friends of friends, excluding current friends)
+redis> SDIFF friends:user:456 friends:user:123
+1) "user:999"
+```
+
+### Voting System
+
+```bash
+# Track who upvoted a post
+redis> SADD post:123:upvotes "user:456"
+(integer) 1
+redis> SADD post:123:upvotes "user:789"
+(integer) 1
+
+# Check if user already voted
+redis> SISMEMBER post:123:upvotes "user:456"
+(integer) 1
+
+# Get vote count
+redis> SCARD post:123:upvotes
+(integer) 2
+
+# Remove vote
+redis> SREM post:123:upvotes "user:456"
+(integer) 1
+```
+
+### Random Winner Selection
+
+```bash
+# Add contestants
+redis> SADD contest:entrants "user:1" "user:2" "user:3" "user:4"
+(integer) 4
+
+# Pick a winner (removes from set)
+redis> SPOP contest:entrants
+"user:3"
+
+# Or pick without removing
+redis> SRANDMEMBER contest:entrants
+"user:1"
+```
+
+## Internal Encoding
+
+Redis uses two encodings for sets:
+
+- **intset**: When all members are integers (very memory efficient)
+- **hashtable**: For string members or large integer sets
+
+```bash
+redis> SADD intset 1 2 3 4 5
+(integer) 5
+redis> OBJECT ENCODING intset
+"intset"
+
+redis> SADD stringset "a" "b" "c"
+(integer) 3
+redis> OBJECT ENCODING stringset
+"hashtable"
+```
+
+Configuration:
+
+```conf
+# Max intset entries before converting to hashtable
+set-max-intset-entries 512
+
+# Max listpack entries (for small sets)
+set-max-listpack-entries 128
+set-max-listpack-value 64
+```
+
+## Best Practices
+
+1. **Use sets for uniqueness** - automatic deduplication
+2. **SISMEMBER for lookups** - O(1) membership testing
+3. **Avoid SMEMBERS on large sets** - use SSCAN instead
+4. **Use SINTERSTORE/SUNIONSTORE** to cache expensive set operations
+5. **Consider HyperLogLog** for counting unique items with less memory
+
+<Warning>
+SMEMBERS returns the entire set. For large sets (over 1000 elements), use SSCAN to iterate incrementally.
+</Warning>
+
+<Tip>
+For ordered uniqueness (like top contributors), use sorted sets instead of regular sets.
+</Tip>
+
+## Sets vs Other Types
+
+| Need | Use | Why |
+|------|-----|-----|
+| Uniqueness only | Sets | Simple and fast |
+| Uniqueness + order | Sorted Sets | Score-based ordering |
+| Counting uniques | HyperLogLog | Minimal memory |
+| Ordered list | Lists | Maintains insertion order |
+| Key-value pairs | Hashes | Structured data |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Set Commands" href="/commands/sets">
+    Complete command reference
+  </Card>
+  <Card title="Sorted Sets" href="/data-types/sorted-sets">
+    For ordered unique elements
+  </Card>
+</CardGroup>

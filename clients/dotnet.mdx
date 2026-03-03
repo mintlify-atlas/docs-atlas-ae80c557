@@ -1,0 +1,488 @@
+---
+title: .NET Client (NRedisStack & StackExchange.Redis)
+description: Connect to Redis from .NET using NRedisStack and StackExchange.Redis
+---
+
+The official .NET clients for Redis are **NRedisStack** and **StackExchange.Redis**. NRedisStack extends StackExchange.Redis with additional support for Redis modules like JSON, Search, and TimeSeries.
+
+## Choosing the Right Client
+
+<CardGroup cols={2}>
+  <Card title="StackExchange.Redis" icon="database">
+    **Best for:** Core Redis functionality
+    
+    - All Redis core commands
+    - Connection multiplexing
+    - High performance
+    - Async/await support
+  </Card>
+  
+  <Card title="NRedisStack" icon="layer-group">
+    **Best for:** Redis modules support
+    
+    - Extends StackExchange.Redis
+    - Redis JSON support
+    - Redis Search support
+    - TimeSeries, Bloom filters, and more
+  </Card>
+</CardGroup>
+
+## Installation
+
+Install using NuGet Package Manager:
+
+<CodeGroup>
+```bash NRedisStack (Recommended)
+dotnet add package NRedisStack
+```
+
+```bash StackExchange.Redis
+dotnet add package StackExchange.Redis
+```
+
+```xml PackageReference
+<PackageReference Include="NRedisStack" Version="0.12.0" />
+<!-- or -->
+<PackageReference Include="StackExchange.Redis" Version="2.7.0" />
+```
+</CodeGroup>
+
+<Tip>
+  Use NRedisStack if you need Redis modules support. It includes StackExchange.Redis as a dependency and adds additional functionality.
+</Tip>
+
+## Quick Start
+
+<Steps>
+  <Step title="Create a connection">
+    Connect to Redis using NRedisStack:
+    
+    ```csharp
+    using StackExchange.Redis;
+    using NRedisStack;
+    using NRedisStack.RedisStackCommands;
+    
+    // Create connection
+    var redis = ConnectionMultiplexer.Connect("localhost:6379");
+    var db = redis.GetDatabase();
+    
+    // Test connection
+    var pong = db.Ping();
+    Console.WriteLine($"Connected: {pong.TotalMilliseconds}ms");
+    ```
+  </Step>
+  
+  <Step title="Perform basic operations">
+    Execute Redis commands:
+    
+    ```csharp
+    // SET and GET operations
+    db.StringSet("user:1:name", "Alice");
+    var name = db.StringGet("user:1:name");
+    Console.WriteLine($"Name: {name}");  // Output: Name: Alice
+    
+    // Work with numbers
+    db.StringSet("counter", 0);
+    db.StringIncrement("counter");
+    db.StringIncrement("counter", 5);
+    var count = db.StringGet("counter");
+    Console.WriteLine($"Counter: {count}");  // Output: Counter: 6
+    
+    // Expiration
+    db.StringSet("session:abc", "session_data", TimeSpan.FromHours(1));
+    ```
+  </Step>
+  
+  <Step title="Use async operations">
+    Leverage async/await for better performance:
+    
+    ```csharp
+    // Async operations (recommended)
+    await db.StringSetAsync("key", "value");
+    var value = await db.StringGetAsync("key");
+    Console.WriteLine(value);
+    
+    // Multiple async operations
+    var setTask1 = db.StringSetAsync("key1", "value1");
+    var setTask2 = db.StringSetAsync("key2", "value2");
+    await Task.WhenAll(setTask1, setTask2);
+    ```
+  </Step>
+  
+  <Step title="Handle errors">
+    Implement proper error handling:
+    
+    ```csharp
+    using StackExchange.Redis;
+    
+    try
+    {
+        var redis = ConnectionMultiplexer.Connect(new ConfigurationOptions
+        {
+            EndPoints = { "localhost:6379" },
+            ConnectTimeout = 5000,
+            SyncTimeout = 5000,
+            AbortOnConnectFail = false
+        });
+        
+        var db = redis.GetDatabase();
+        
+        await db.StringSetAsync("key", "value");
+        var value = await db.StringGetAsync("key");
+        Console.WriteLine(value);
+    }
+    catch (RedisConnectionException ex)
+    {
+        Console.WriteLine($"Connection error: {ex.Message}");
+    }
+    catch (RedisTimeoutException ex)
+    {
+        Console.WriteLine($"Timeout: {ex.Message}");
+    }
+    catch (RedisException ex)
+    {
+        Console.WriteLine($"Redis error: {ex.Message}");
+    }
+    ```
+  </Step>
+</Steps>
+
+## Connection Patterns
+
+### Basic Connection
+
+```csharp
+using StackExchange.Redis;
+
+var redis = ConnectionMultiplexer.Connect("localhost:6379");
+var db = redis.GetDatabase();
+```
+
+### Advanced Connection Options
+
+```csharp
+var config = new ConfigurationOptions
+{
+    EndPoints = { "localhost:6379" },
+    Password = "your-password",
+    ConnectTimeout = 5000,
+    SyncTimeout = 5000,
+    AsyncTimeout = 5000,
+    ConnectRetry = 3,
+    AbortOnConnectFail = false,
+    KeepAlive = 60
+};
+
+var redis = ConnectionMultiplexer.Connect(config);
+```
+
+### Secure TLS Connection
+
+```csharp
+var config = new ConfigurationOptions
+{
+    EndPoints = { "your-redis-host.com:6380" },
+    Password = "your-password",
+    Ssl = true,
+    SslProtocols = System.Security.Authentication.SslProtocols.Tls12
+};
+
+var redis = ConnectionMultiplexer.Connect(config);
+```
+
+### Redis Cloud Connection
+
+```csharp
+var config = new ConfigurationOptions
+{
+    EndPoints = { "your-endpoint.redis.cloud:12345" },
+    Password = "your-password",
+    Ssl = true
+};
+
+var redis = ConnectionMultiplexer.Connect(config);
+```
+
+### Connection String Format
+
+```csharp
+var redis = ConnectionMultiplexer.Connect(
+    "your-redis-host.com:6380,password=your-password,ssl=true,abortConnect=false"
+);
+```
+
+## Working with Data Structures
+
+### Hashes
+
+```csharp
+// Store user data as a hash
+var user = new HashEntry[]
+{
+    new HashEntry("name", "Alice"),
+    new HashEntry("email", "alice@example.com"),
+    new HashEntry("age", 30)
+};
+db.HashSet("user:1", user);
+
+// Get specific field
+var name = db.HashGet("user:1", "name");
+Console.WriteLine(name);
+
+// Get all fields
+var userData = db.HashGetAll("user:1");
+foreach (var field in userData)
+{
+    Console.WriteLine($"{field.Name}: {field.Value}");
+}
+
+// Increment numeric field
+db.HashIncrement("user:1", "age", 1);
+```
+
+### Lists
+
+```csharp
+// Add items to a list
+db.ListRightPush("queue", new RedisValue[] { "task1", "task2", "task3" });
+
+// Get list length
+var length = db.ListLength("queue");
+
+// Pop item from list
+var task = db.ListLeftPop("queue");
+Console.WriteLine(task);  // task1
+
+// Get range of items
+var tasks = db.ListRange("queue", 0, -1);
+foreach (var t in tasks)
+{
+    Console.WriteLine(t);
+}
+```
+
+### Sets
+
+```csharp
+// Add members to a set
+db.SetAdd("tags", new RedisValue[] { "python", "redis", "database" });
+
+// Check membership
+var isMember = db.SetContains("tags", "python");
+Console.WriteLine(isMember);  // true
+
+// Get all members
+var tags = db.SetMembers("tags");
+
+// Set operations
+db.SetAdd("tags2", new RedisValue[] { "redis", "cache", "nosql" });
+var common = db.SetCombine(SetOperation.Intersect, "tags", "tags2");
+```
+
+### Sorted Sets
+
+```csharp
+// Add scored members
+db.SortedSetAdd("leaderboard", new SortedSetEntry[]
+{
+    new SortedSetEntry("alice", 100),
+    new SortedSetEntry("bob", 150),
+    new SortedSetEntry("charlie", 120)
+});
+
+// Get top scores (descending)
+var topPlayers = db.SortedSetRangeByRankWithScores(
+    "leaderboard", 0, 2, Order.Descending
+);
+foreach (var player in topPlayers)
+{
+    Console.WriteLine($"{player.Element}: {player.Score}");
+}
+
+// Get rank
+var rank = db.SortedSetRank("leaderboard", "alice", Order.Descending);
+
+// Increment score
+db.SortedSetIncrement("leaderboard", "alice", 25);
+```
+
+## Working with JSON (NRedisStack)
+
+NRedisStack provides native JSON support:
+
+```csharp
+using NRedisStack;
+using NRedisStack.RedisStackCommands;
+using System.Text.Json;
+
+var redis = ConnectionMultiplexer.Connect("localhost:6379");
+var db = redis.GetDatabase();
+var json = db.JSON();
+
+// Store JSON document
+var user = new
+{
+    name = "Alice",
+    email = "alice@example.com",
+    age = 30,
+    tags = new[] { "developer", "redis" }
+};
+
+json.Set("user:1", "$", user);
+
+// Get JSON document
+var result = json.Get("user:1");
+
+// Update specific field
+json.Set("user:1", "$.age", 31);
+
+// Get specific field
+var age = json.Get("user:1", "$.age");
+```
+
+## Advanced Features
+
+### Pipelining with Batch
+
+```csharp
+var batch = db.CreateBatch();
+
+var setTask1 = batch.StringSetAsync("key1", "value1");
+var setTask2 = batch.StringSetAsync("key2", "value2");
+var incrTask = batch.StringIncrementAsync("counter");
+var getTask = batch.StringGetAsync("key1");
+
+batch.Execute();
+
+// Wait for all results
+await Task.WhenAll(setTask1, setTask2, incrTask, getTask);
+
+Console.WriteLine(await getTask);  // value1
+```
+
+### Transactions
+
+```csharp
+var tran = db.CreateTransaction();
+
+// Add conditions (optional)
+tran.AddCondition(Condition.KeyExists("balance"));
+
+// Queue commands
+var setTask1 = tran.StringSetAsync("key1", "value1");
+var setTask2 = tran.StringSetAsync("key2", "value2");
+var incrTask = tran.StringIncrementAsync("counter");
+
+// Execute transaction atomically
+var success = await tran.ExecuteAsync();
+
+if (success)
+{
+    Console.WriteLine("Transaction successful");
+    Console.WriteLine(await setTask1);
+}
+else
+{
+    Console.WriteLine("Transaction failed");
+}
+```
+
+### Pub/Sub
+
+```csharp
+using StackExchange.Redis;
+
+// Subscriber
+var redis = ConnectionMultiplexer.Connect("localhost:6379");
+var subscriber = redis.GetSubscriber();
+
+await subscriber.SubscribeAsync("notifications", (channel, message) =>
+{
+    Console.WriteLine($"Received: {message}");
+});
+
+// Publisher
+var publisher = redis.GetSubscriber();
+await publisher.PublishAsync("notifications", "Hello, Redis!");
+```
+
+### Key Scanning
+
+```csharp
+var server = redis.GetServer("localhost:6379");
+
+await foreach (var key in server.KeysAsync(pattern: "user:*", pageSize: 100))
+{
+    Console.WriteLine(key);
+    var value = await db.StringGetAsync(key);
+    Console.WriteLine(value);
+}
+```
+
+## Dependency Injection (.NET Core)
+
+Register Redis in your application:
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using StackExchange.Redis;
+
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddSingleton<IConnectionMultiplexer>(
+        ConnectionMultiplexer.Connect("localhost:6379")
+    );
+    
+    services.AddScoped(sp =>
+    {
+        var redis = sp.GetRequiredService<IConnectionMultiplexer>();
+        return redis.GetDatabase();
+    });
+}
+```
+
+Use in controllers or services:
+
+```csharp
+public class CacheService
+{
+    private readonly IDatabase _db;
+    
+    public CacheService(IDatabase db)
+    {
+        _db = db;
+    }
+    
+    public async Task<string> GetAsync(string key)
+    {
+        return await _db.StringGetAsync(key);
+    }
+}
+```
+
+## Starter Project
+
+<Card 
+  title="Redis .NET Starter Project" 
+  icon="github" 
+  href="https://github.com/redis-developer/redis-starter-csharp"
+>
+  Clone the official starter project with ASP.NET Core examples and best practices.
+</Card>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title=".NET Client Documentation" icon="book" href="https://redis.io/docs/latest/develop/clients/dotnet/">
+    Official .NET client documentation
+  </Card>
+  <Card title="StackExchange.Redis GitHub" icon="github" href="https://github.com/StackExchange/StackExchange.Redis">
+    Source code and documentation
+  </Card>
+  <Card title="Redis Commands" icon="terminal" href="https://redis.io/commands/">
+    Complete Redis command reference
+  </Card>
+  <Card title="Data Types Guide" icon="database" href="https://redis.io/docs/latest/develop/data-types/">
+    Learn about Redis data structures
+  </Card>
+</CardGroup>

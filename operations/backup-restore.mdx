@@ -1,0 +1,592 @@
+---
+title: 'Backup and Restore'
+description: 'Redis persistence: SAVE, BGSAVE, RDB snapshots, and backup strategies'
+---
+
+## Overview
+
+Redis provides two persistence mechanisms: RDB (Redis Database) snapshots and AOF (Append Only File). This guide covers RDB snapshots, backup strategies, and the SAVE/BGSAVE commands.
+
+## RDB Snapshots
+
+RDB creates point-in-time snapshots of your dataset at specified intervals.
+
+### How RDB Works
+
+Redis forks a child process that writes the dataset to a temporary RDB file. Once complete, it replaces the old RDB file with the new one.
+
+### RDB Configuration
+
+#### Automatic Snapshots
+
+```conf
+# Save after 3600 seconds if at least 1 key changed
+# Save after 300 seconds if at least 100 keys changed  
+# Save after 60 seconds if at least 10000 keys changed
+save 3600 1 300 100 60 10000
+
+# Disable automatic snapshots
+save ""
+```
+
+The `save` directive uses the format:
+```
+save <seconds> <changes> [<seconds> <changes> ...]
+```
+
+#### RDB File Settings
+
+```conf
+# RDB filename
+dbfilename dump.rdb
+
+# Working directory (RDB and AOF files location)
+dir ./
+
+# Compress RDB file using LZF
+rdbcompression yes
+
+# Add CRC64 checksum to RDB file
+rdbchecksum yes
+
+# Stop writes if BGSAVE fails
+stop-writes-on-bgsave-error yes
+```
+
+### RDB Advantages
+
+- **Compact**: Single file representation of entire dataset
+- **Fast**: Very fast server restart with large datasets
+- **Performance**: Minimal impact on parent process during save
+- **Disaster Recovery**: Easy to backup and transfer
+
+### RDB Disadvantages
+
+- **Data Loss**: Can lose data between snapshots
+- **Fork Time**: Large datasets may cause brief pause
+- **Not Real-time**: Not suitable for minimal data loss requirements
+
+## SAVE vs BGSAVE Commands
+
+### SAVE Command
+
+Synchronous save - **blocks** the Redis server.
+
+```bash
+SAVE
+```
+
+**Characteristics:**
+- Blocks all client requests during save
+- No fork() required
+- Guaranteed completion before returning
+- Safe from OOM errors (no additional memory needed)
+
+**Use Cases:**
+- Server shutdown procedures
+- Maintenance windows
+- Low memory situations
+- When you need guaranteed snapshot before continuing
+
+<Warning>
+**SAVE blocks all clients**. In production, use BGSAVE instead. SAVE is primarily for shutdown or maintenance scenarios.
+</Warning>
+
+### BGSAVE Command
+
+Background save - **non-blocking**.
+
+```bash
+BGSAVE
+```
+
+**Characteristics:**
+- Forks a child process to save in background
+- Parent process continues serving clients
+- Uses Copy-on-Write (CoW) mechanism
+- Requires additional memory during fork
+
+**Use Cases:**
+- Production environments
+- Regular automated backups
+- When uptime is critical
+- Scheduled snapshot creation
+
+#### BGSAVE SCHEDULE
+
+Schedule BGSAVE when another save operation is active:
+
+```bash
+BGSAVE SCHEDULE
+```
+
+If AOF rewrite or another BGSAVE is in progress, this schedules a BGSAVE to run when the current operation completes.
+
+### SAVE vs BGSAVE Comparison
+
+| Feature | SAVE | BGSAVE |
+|---------|------|--------|
+| Blocking | Yes | No |
+| Fork Required | No | Yes |
+| Memory Overhead | None | 2x dataset during CoW |
+| Performance Impact | Complete block | Minimal |
+| Failure Risk | Very low | OOM possible on fork |
+| Use in Production | No | Yes |
+
+### Checking Save Status
+
+```bash
+# Check if BGSAVE is in progress
+INFO persistence | grep rdb_bgsave_in_progress
+
+# Get last save time
+LASTSAVE
+
+# Get last BGSAVE status
+INFO persistence | grep rdb_last_bgsave_status
+
+# Get last BGSAVE duration
+INFO persistence | grep rdb_last_bgsave_time_sec
+```
+
+## Backup Strategies
+
+### Strategy 1: Scheduled BGSAVE
+
+Use cron to schedule regular backups:
+
+```bash
+#!/bin/bash
+# backup-redis.sh
+
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/backup/redis"
+REDIS_DIR="/var/lib/redis"
+
+# Trigger BGSAVE
+redis-cli BGSAVE
+
+# Wait for BGSAVE to complete
+while [ $(redis-cli INFO persistence | grep rdb_bgsave_in_progress | cut -d: -f2 | tr -d '\r') -eq 1 ]; do
+    sleep 1
+done
+
+# Check if BGSAVE succeeded
+STATUS=$(redis-cli INFO persistence | grep rdb_last_bgsave_status | cut -d: -f2 | tr -d '\r')
+
+if [ "$STATUS" = "ok" ]; then
+    # Copy RDB file to backup location
+    cp $REDIS_DIR/dump.rdb $BACKUP_DIR/dump_$TIMESTAMP.rdb
+    echo "Backup successful: dump_$TIMESTAMP.rdb"
+else
+    echo "Backup failed: BGSAVE error"
+    exit 1
+fi
+```
+
+Crontab entry:
+```cron
+# Backup every 6 hours
+0 */6 * * * /path/to/backup-redis.sh
+```
+
+### Strategy 2: Incremental with AOF
+
+Combine RDB snapshots with AOF for better durability:
+
+```conf
+# Enable AOF
+appendonly yes
+appendfsync everysec
+
+# Enable RDB for periodic snapshots
+save 3600 1 300 100 60 10000
+
+# Use RDB format for AOF base
+aof-use-rdb-preamble yes
+```
+
+### Strategy 3: Snapshot Before Shutdown
+
+Configure Redis to save on shutdown:
+
+```conf
+# Default behavior on SIGTERM
+shutdown-on-sigterm default  # Saves if save points configured
+
+# Force save on shutdown
+shutdown-on-sigterm save
+
+# Never save on shutdown
+shutdown-on-sigterm nosave
+```
+
+### Strategy 4: Replica-Based Backups
+
+Perform backups on replicas to avoid impacting master:
+
+<Steps>
+
+### Set Up Replica
+
+```conf
+# On replica server
+replicaof master-ip master-port
+```
+
+### Trigger BGSAVE on Replica
+
+```bash
+# Connect to replica and backup
+redis-cli -h replica-host BGSAVE
+```
+
+### Copy RDB from Replica
+
+```bash
+scp replica-host:/var/lib/redis/dump.rdb /backup/
+```
+
+</Steps>
+
+This approach eliminates backup impact on the master server.
+
+## Backup Best Practices
+
+<Steps>
+
+### Multiple Backup Copies
+
+Maintain multiple backup copies:
+
+```bash
+# Keep last 7 daily backups
+find /backup/redis -name "dump_*.rdb" -mtime +7 -delete
+```
+
+### Off-Site Backups
+
+Sync backups to remote storage:
+
+```bash
+# Upload to S3
+aws s3 cp dump.rdb s3://my-redis-backups/dump_$(date +%Y%m%d).rdb
+
+# Or use rsync
+rsync -avz /backup/redis/ remote-server:/backup/redis/
+```
+
+### Verify Backups
+
+Regularly test backup restoration:
+
+```bash
+# Test RDB file integrity
+redis-check-rdb dump.rdb
+```
+
+### Compress Backups
+
+Compress old backups to save space:
+
+```bash
+# Compress backups older than 1 day
+find /backup/redis -name "*.rdb" -mtime +1 ! -name "*.gz" -exec gzip {} \;
+```
+
+### Monitor Backup Operations
+
+Alert on backup failures:
+
+```bash
+#!/bin/bash
+# Check last BGSAVE status
+STATUS=$(redis-cli INFO persistence | grep rdb_last_bgsave_status | cut -d: -f2)
+
+if [ "$STATUS" != "ok" ]; then
+    # Send alert
+    echo "Redis BGSAVE failed" | mail -s "Redis Backup Alert" admin@example.com
+fi
+```
+
+</Steps>
+
+## Restore from RDB
+
+### Basic Restoration
+
+<Steps>
+
+### Stop Redis Server
+
+```bash
+redis-cli SHUTDOWN NOSAVE
+```
+
+### Replace RDB File
+
+```bash
+cp /backup/dump.rdb /var/lib/redis/dump.rdb
+chown redis:redis /var/lib/redis/dump.rdb
+```
+
+### Start Redis Server
+
+```bash
+redis-server /etc/redis/redis.conf
+```
+
+### Verify Data
+
+```bash
+redis-cli DBSIZE
+redis-cli INFO keyspace
+```
+
+</Steps>
+
+### Restoration to Different Server
+
+```bash
+# Copy RDB to new server
+scp /backup/dump.rdb new-server:/var/lib/redis/
+
+# On new server
+chown redis:redis /var/lib/redis/dump.rdb
+redis-server /etc/redis/redis.conf
+```
+
+### Point-in-Time Recovery
+
+If using AOF with RDB:
+
+```bash
+# Restore specific RDB snapshot
+cp /backup/dump_20240115_120000.rdb /var/lib/redis/dump.rdb
+
+# Optionally restore AOF
+cp /backup/appendonly.aof /var/lib/redis/
+
+# Start Redis
+redis-server /etc/redis/redis.conf
+```
+
+## Backup Automation Example
+
+Complete backup script with rotation:
+
+```bash
+#!/bin/bash
+# complete-backup.sh
+
+set -e
+
+# Configuration
+REDIS_CLI="redis-cli"
+BACKUP_DIR="/backup/redis"
+RDB_SOURCE="/var/lib/redis/dump.rdb"
+KEEP_DAYS=7
+S3_BUCKET="s3://my-redis-backups"
+
+# Create backup directory
+mkdir -p $BACKUP_DIR
+
+# Generate timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/dump_$TIMESTAMP.rdb"
+
+echo "Starting Redis backup at $TIMESTAMP"
+
+# Trigger BGSAVE
+echo "Triggering BGSAVE..."
+$REDIS_CLI BGSAVE > /dev/null
+
+# Wait for completion
+echo "Waiting for BGSAVE to complete..."
+while [ $($REDIS_CLI INFO persistence | grep rdb_bgsave_in_progress | cut -d: -f2 | tr -d '\r') -eq 1 ]; do
+    sleep 2
+done
+
+# Check status
+STATUS=$($REDIS_CLI INFO persistence | grep rdb_last_bgsave_status | cut -d: -f2 | tr -d '\r')
+
+if [ "$STATUS" != "ok" ]; then
+    echo "ERROR: BGSAVE failed with status: $STATUS"
+    exit 1
+fi
+
+# Copy RDB file
+echo "Copying RDB file..."
+cp $RDB_SOURCE $BACKUP_FILE
+
+# Compress
+echo "Compressing backup..."
+gzip $BACKUP_FILE
+BACKUP_FILE="${BACKUP_FILE}.gz"
+
+# Upload to S3
+echo "Uploading to S3..."
+aws s3 cp $BACKUP_FILE $S3_BUCKET/$(basename $BACKUP_FILE)
+
+if [ $? -eq 0 ]; then
+    echo "Backup uploaded successfully"
+else
+    echo "ERROR: S3 upload failed"
+    exit 1
+fi
+
+# Clean old local backups
+echo "Cleaning old backups..."
+find $BACKUP_DIR -name "dump_*.rdb.gz" -mtime +$KEEP_DAYS -delete
+
+# Get backup size
+SIZE=$(du -h $BACKUP_FILE | cut -f1)
+echo "Backup completed successfully"
+echo "File: $(basename $BACKUP_FILE)"
+echo "Size: $SIZE"
+
+# Send success notification
+echo "Redis backup completed: $BACKUP_FILE ($SIZE)" | \
+    mail -s "Redis Backup Success" admin@example.com
+
+exit 0
+```
+
+## RDB File Verification
+
+### Check RDB Integrity
+
+```bash
+# Verify RDB file
+redis-check-rdb /path/to/dump.rdb
+```
+
+Output example:
+```
+[offset 0] Checking RDB file dump.rdb
+[offset 26] AUX FIELD redis-ver = '7.2.0'
+[offset 40] AUX FIELD redis-bits = '64'
+[offset 52] AUX FIELD ctime = '1234567890'
+...
+[offset 12345] Checksum OK
+[info] 1234 keys read
+[info] 0 expires
+[info] 0 already expired
+```
+
+### RDB File Information
+
+```bash
+# Get RDB file size
+ls -lh /var/lib/redis/dump.rdb
+
+# Check last modification time
+stat /var/lib/redis/dump.rdb
+
+# Get key count from RDB
+redis-check-rdb dump.rdb | grep "keys read"
+```
+
+## Disaster Recovery
+
+### Recovery Checklist
+
+- [ ] Identify backup to restore (timestamp, size)
+- [ ] Verify backup integrity with redis-check-rdb
+- [ ] Stop Redis server
+- [ ] Backup current RDB (if exists)
+- [ ] Copy backup RDB to data directory
+- [ ] Set correct permissions
+- [ ] Start Redis server
+- [ ] Verify key count matches expected
+- [ ] Test critical application functionality
+- [ ] Monitor performance and memory usage
+
+### Recovery Time Objectives
+
+RDB restoration is very fast:
+- Small datasets (under 1GB): Seconds
+- Medium datasets (1-10GB): 1-5 minutes
+- Large datasets (over 10GB): 5-30 minutes
+
+Actual time depends on:
+- Disk I/O speed
+- RDB file size
+- Server memory
+- Compression settings
+
+## Troubleshooting
+
+### BGSAVE Fails
+
+**Problem**: BGSAVE returns error
+
+**Solutions**:
+
+```bash
+# Check available memory
+free -h
+
+# Check disk space
+df -h /var/lib/redis
+
+# Check Redis logs
+tail -f /var/log/redis/redis-server.log
+
+# Disable CoW-friendly overcommit
+sudo sysctl vm.overcommit_memory=1
+echo 'vm.overcommit_memory=1' | sudo tee -a /etc/sysctl.conf
+```
+
+### Fork Cannot Allocate Memory
+
+**Problem**: BGSAVE fails with "Cannot allocate memory"
+
+**Solution**: Enable memory overcommit
+
+```bash
+# Temporary
+sudo sysctl vm.overcommit_memory=1
+
+# Permanent
+echo 'vm.overcommit_memory=1' | sudo tee -a /etc/sysctl.conf
+```
+
+### Slow BGSAVE Performance
+
+**Problem**: BGSAVE takes too long
+
+**Solutions**:
+
+```bash
+# Disable transparent huge pages
+echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+
+# Check if disk is slow
+iostat -x 1
+
+# Consider disabling compression for speed
+CONFIG SET rdbcompression no
+```
+
+### RDB File Corruption
+
+**Problem**: RDB file is corrupted
+
+**Solution**: Use redis-check-rdb to fix
+
+```bash
+# Check and attempt fix
+redis-check-rdb --fix dump.rdb
+```
+
+<Warning>
+Always keep original backup before attempting fixes.
+</Warning>
+
+## See Also
+
+- [Configuration](/operations/configuration)
+- [Monitoring](/operations/monitoring)
+- [Performance Tuning](/operations/performance-tuning)
+- [Redis Persistence Documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)

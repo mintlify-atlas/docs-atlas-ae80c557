@@ -1,0 +1,419 @@
+---
+title: 'Data Persistence'
+description: 'Understanding RDB snapshots and AOF append-only file persistence mechanisms'
+---
+
+## Overview
+
+Redis provides two primary persistence mechanisms that can be used independently or together:
+
+1. **RDB (Redis Database)**: Point-in-time snapshots
+2. **AOF (Append-Only File)**: Command logging for durability
+
+## RDB Persistence
+
+### Snapshot Format
+
+RDB files store a binary snapshot of the dataset at a specific point in time. The format includes:
+
+- **Magic String**: RDB format identifier
+- **Version**: RDB format version (current: `RDB_VERSION`)
+- **Encoded Data**: Compressed objects and metadata
+- **Checksum**: CRC64 for corruption detection
+- **EOF Marker**: 40-byte marker (`RDB_EOF_MARK_SIZE`)
+
+### Return Values
+
+From `server.h:360-363`:
+
+```c
+#define RDB_OK 0
+#define RDB_NOT_EXIST 1    // RDB file doesn't exist
+#define RDB_FAILED 2       // Failed to load the RDB file
+```
+
+### Creating Snapshots
+
+#### Background Save (BGSAVE)
+
+Redis forks a child process to write RDB without blocking:
+
+```c
+// From rdb.c
+int rdbSaveBackground(req, filename, rsiptr, flags)
+```
+
+**Process:**
+
+1. Parent forks child process
+2. Child writes RDB to temporary file
+3. Child atomically renames temp file on success
+4. Parent receives child exit status
+5. RDB file becomes available
+
+<Note>
+Fork uses copy-on-write (COW), so memory is only duplicated when modified during the save.
+</Note>
+
+#### Synchronous Save (SAVE)
+
+Blocking save that stops all client operations:
+
+- Used during shutdown with `stop-writes-on-bgsave-error no`
+- Guaranteed write before process exit
+- Not recommended for production use during normal operations
+
+### Configuration
+
+From `redis.conf:441-462`:
+
+```
+# Save the DB if:
+# After 3600 seconds (an hour) if at least 1 change
+# After 300 seconds (5 minutes) if at least 100 changes
+# After 60 seconds if at least 10000 changes
+
+save 3600 1 300 100 60 10000
+
+# Disable snapshotting completely:
+# save ""
+```
+
+**Additional Settings:**
+
+```
+# Stop accepting writes if BGSAVE fails
+stop-writes-on-bgsave-error yes
+
+# Compress string objects using LZF
+rdbcompression yes
+
+# CRC64 checksum at file end
+rdbchecksum yes
+
+# Filename
+dbfilename dump.rdb
+```
+
+### Compression
+
+RDB uses LZF compression from `rdb.c:364-380`:
+
+```c
+ssize_t rdbSaveLzfStringObject(rio *rdb, unsigned char *s, size_t len) {
+    // Requires at least 4 bytes savings
+    if (len <= 4) return 0;
+    outlen = len-4;
+    comprlen = lzf_compress(s, len, out, outlen);
+    if (comprlen == 0) {
+        return 0;  // Not compressible
+    }
+    return rdbSaveLzfBlob(rdb, out, comprlen, len);
+}
+```
+
+<Tip>
+Small strings (≤4 bytes) are never compressed since compression overhead exceeds savings.
+</Tip>
+
+### Integer Encoding
+
+Strings representing integers are encoded efficiently:
+
+```c
+int rdbEncodeInteger(long long value, unsigned char *enc) {
+    if (value >= -(1<<7) && value <= (1<<7)-1) {
+        // 8-bit integer: 2 bytes total
+        enc[0] = (RDB_ENCVAL<<6)|RDB_ENC_INT8;
+        enc[1] = value&0xFF;
+        return 2;
+    } else if (value >= -(1<<15) && value <= (1<<15)-1) {
+        // 16-bit integer: 3 bytes total
+        return 3;
+    } else if (value >= -((long long)1<<31) && value <= ((long long)1<<31)-1) {
+        // 32-bit integer: 5 bytes total
+        return 5;
+    }
+    return 0;  // Cannot encode
+}
+```
+
+### Replication and RDB
+
+<Warning>
+When generating RDB for replication, Redis may delete the file after transfer if `rdb-del-sync-files` is enabled and persistence is disabled.
+</Warning>
+
+From `replication.c:59-60`:
+
+```c
+int RDBGeneratedByReplication = 0;
+```
+
+This flag tracks whether RDB was created for replication to enable automatic cleanup.
+
+## AOF Persistence
+
+### AOF States
+
+From `server.h:346-349`:
+
+```c
+#define AOF_OFF 0              // AOF is off
+#define AOF_ON 1               // AOF is on
+#define AOF_WAIT_REWRITE 2     // AOF waits rewrite to start appending
+```
+
+### How AOF Works
+
+AOF logs every write command in RESP format:
+
+1. **Command Execution**: Client command is executed
+2. **Buffer Append**: Command written to `server.aof_buf`
+3. **Flush**: Buffer written to AOF file
+4. **Fsync**: File synchronized to disk (policy dependent)
+
+### Multi-File AOF (Redis 7.0+)
+
+AOF uses multiple files managed by a manifest:
+
+**File Types:**
+
+- **BASE**: RDB snapshot from last rewrite (`*.base.rdb` or `*.base.aof`)
+- **INCR**: Incremental changes since last rewrite (`*.incr.aof`)
+- **HISTORY**: Previous BASE/INCR files marked for deletion (`*.incr.aof`, `*.base.*`)
+
+From `aof.c:48-71`:
+
+```
+Manifest file example:
+
+file appendonly.aof.2.base.rdb seq 2 type b
+file appendonly.aof.1.incr.aof seq 1 type h
+file appendonly.aof.2.incr.aof seq 2 type h
+file appendonly.aof.3.incr.aof seq 3 type h
+file appendonly.aof.4.incr.aof seq 4 type i
+file appendonly.aof.5.incr.aof seq 5 type i
+```
+
+### Fsync Policies
+
+From `server.h:633-636`:
+
+```c
+#define AOF_FSYNC_NO 0         // Never fsync
+#define AOF_FSYNC_ALWAYS 1     // Fsync after every write
+#define AOF_FSYNC_EVERYSEC 2   // Fsync once per second
+```
+
+**Configuration from `redis.conf`:**
+
+```
+# AOF fsync policies:
+# appendfsync always    # Maximum durability, slowest
+# appendfsync everysec  # Good balance (default)
+# appendfsync no        # Fastest, least durable
+```
+
+**Trade-offs:**
+
+| Policy | Durability | Performance | Data Loss Risk |
+|--------|------------|-------------|----------------|
+| `always` | Highest | Lowest | None (on ACK) |
+| `everysec` | Good | Good | ~1 second |
+| `no` | Lowest | Highest | Depends on OS |
+
+<Note>
+With `appendfsync always`, Redis guarantees data is on disk before acknowledging writes, but this significantly impacts throughput.
+</Note>
+
+### AOF Rewrite
+
+AOF grows indefinitely, so Redis can rewrite it to minimize size:
+
+**Rewrite Process:**
+
+1. Fork child process
+2. Child generates new BASE file from memory
+3. Parent accumulates new commands in INCR file
+4. Child completes, parent updates manifest
+5. Old files marked as HISTORY and deleted
+
+**Configuration:**
+
+```
+# Automatic rewrite
+auto-aof-rewrite-percentage 100  # Rewrite when 100% larger
+auto-aof-rewrite-min-size 64mb   # Minimum size to rewrite
+
+# Manual rewrite
+BGREWRITEAOF
+```
+
+### AOF Loading
+
+From `aof.c:351-358`:
+
+```c
+#define AOF_OK 0
+#define AOF_NOT_EXIST 1
+#define AOF_EMPTY 2
+#define AOF_OPEN_ERR 3
+#define AOF_FAILED 4
+#define AOF_TRUNCATED 5         // Recoverable
+#define AOF_BROKEN_RECOVERED 6  // Recovered with data loss
+```
+
+**Loading Sequence:**
+
+1. Load BASE file if present
+2. Load INCR files in sequence order
+3. Update `master_repl_offset` from final INCR
+4. Mark server as ready
+
+<Warning>
+If AOF is truncated (incomplete last command), Redis can recover by default but will lose the partial command. Set `aof-load-truncated no` to fail on truncation.
+</Warning>
+
+### Write Buffering
+
+From `aof.c:1147-1355`:
+
+AOF writes are buffered before flush:
+
+```c
+void flushAppendOnlyFile(int force) {
+    if (sdslen(server.aof_buf) == 0) return;
+    
+    // Write buffer to file
+    nwritten = aofWrite(server.aof_fd, server.aof_buf, sdslen(server.aof_buf));
+    
+    // Fsync based on policy
+    if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
+        redis_fsync(server.aof_fd);
+    }
+}
+```
+
+**Buffer Size:**
+
+- Reused when small (less than 4000 bytes after flush)
+- Reallocated when larger to avoid memory fragmentation
+
+### Background Fsync
+
+With `appendfsync everysec`, fsync happens in background:
+
+```c
+void aof_background_fsync(int fd) {
+    bioCreateFsyncJob(fd, server.master_repl_offset, 1);
+}
+```
+
+This prevents blocking the main thread while ensuring durability within 1 second.
+
+## Hybrid Persistence
+
+### Using Both RDB and AOF
+
+<Tip>
+Combine both mechanisms: RDB for fast restarts, AOF for durability.
+</Tip>
+
+**Recommended Configuration:**
+
+```
+# Enable both
+appendonly yes
+save 3600 1 300 100 60 10000
+
+# AOF with RDB preamble (faster loading)
+aof-use-rdb-preamble yes
+```
+
+**Loading Priority:**
+
+1. If AOF exists, load from AOF (more complete)
+2. Otherwise, load from RDB
+3. If neither exists, start with empty dataset
+
+### RDB Preamble in AOF
+
+From `aof.c:448-449`:
+
+```c
+char *format_suffix = server.aof_use_rdb_preamble ?
+    RDB_FORMAT_SUFFIX : AOF_FORMAT_SUFFIX;
+```
+
+When enabled, AOF rewrite creates:
+
+```
+appendonly.aof.1.base.rdb  # RDB snapshot
+appendonly.aof.2.incr.aof  # Subsequent commands
+```
+
+This combines RDB's fast loading with AOF's durability.
+
+## Performance Considerations
+
+### RDB Performance
+
+- **Fork Time**: Proportional to memory size (typically milliseconds)
+- **COW Overhead**: Modified pages duplicated during save
+- **Disk I/O**: Sequential writes, very efficient
+- **CPU**: Compression uses CPU but reduces I/O
+
+### AOF Performance
+
+- **Write Amplification**: Every command appended to file
+- **Fsync Cost**: Depends on policy and disk speed
+- **Rewrite Cost**: Similar to RDB BGSAVE
+- **Disk Usage**: Grows until rewrite
+
+### Optimization
+
+From `redis.conf:722`:
+
+```
+# Don't fsync during BGSAVE/BGREWRITEAOF
+no-appendfsync-on-rewrite no
+```
+
+<Warning>
+Setting `no-appendfsync-on-rewrite yes` improves performance during background operations but increases risk of data loss if Redis crashes.
+</Warning>
+
+## Recovery and Durability
+
+### Crash Recovery
+
+**With AOF only:**
+- Replay all commands from AOF
+- Loss: Commands since last fsync (0 to N seconds based on policy)
+
+**With RDB only:**
+- Load last snapshot
+- Loss: All changes since last save
+
+**With both:**
+- Load from AOF (more complete)
+- Loss: Minimal (based on fsync policy)
+
+### Corruption Handling
+
+**RDB Corruption:**
+
+```bash
+redis-check-rdb dump.rdb
+```
+
+**AOF Corruption:**
+
+```bash
+redis-check-aof --fix appendonly.aof
+```
+
+<Note>
+The `redis-check-aof --fix` command truncates AOF at the first corruption, potentially losing data. Always backup first.
+</Note>

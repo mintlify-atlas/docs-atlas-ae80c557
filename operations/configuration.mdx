@@ -1,0 +1,432 @@
+---
+title: 'Configuration'
+description: 'Redis configuration options and redis.conf management'
+---
+
+## Overview
+
+Redis configuration can be managed through the `redis.conf` file or dynamically at runtime using the `CONFIG` command. This guide covers configuration directives, runtime management, and best practices.
+
+## Configuration File
+
+### Starting Redis with a Configuration File
+
+Redis must be started with the configuration file path as the first argument:
+
+```bash
+./redis-server /path/to/redis.conf
+```
+
+### Unit Specifications
+
+Redis supports convenient memory size units (case insensitive):
+
+- `1k` => 1000 bytes
+- `1kb` => 1024 bytes
+- `1m` => 1000000 bytes
+- `1mb` => 1024*1024 bytes
+- `1g` => 1000000000 bytes
+- `1gb` => 1024*1024*1024 bytes
+
+## CONFIG Commands
+
+### CONFIG GET
+
+Retrieve the value of configuration parameters.
+
+```bash
+# Get a specific configuration
+CONFIG GET maxmemory
+
+# Get multiple configurations
+CONFIG GET maxmemory maxmemory-policy
+
+# Use glob patterns
+CONFIG GET max*
+CONFIG GET *memory*
+```
+
+The command returns a map of configuration names to values.
+
+### CONFIG SET
+
+Change configuration parameters at runtime without restarting Redis.
+
+```bash
+# Set a single parameter
+CONFIG SET maxmemory 2gb
+
+# Set multiple parameters
+CONFIG SET maxmemory 2gb maxmemory-policy allkeys-lru
+```
+
+<Warning>
+Some configuration directives are **immutable** and cannot be changed at runtime. Others are **protected** and require special permissions. Changing configuration at runtime does not persist across restarts unless you use `CONFIG REWRITE`.
+</Warning>
+
+### CONFIG REWRITE
+
+Persist runtime configuration changes back to the `redis.conf` file:
+
+```bash
+CONFIG REWRITE
+```
+
+This command rewrites the configuration file, preserving comments and structure while updating changed values.
+
+## Core Configuration Directives
+
+### Network Configuration
+
+#### bind
+
+Specify which network interfaces Redis should listen on:
+
+```conf
+# Listen on localhost only (default, secure)
+bind 127.0.0.1 -::1
+
+# Listen on specific IP addresses
+bind 192.168.1.100 10.0.0.1
+
+# Listen on all interfaces (NOT recommended for production)
+bind * -::*
+```
+
+#### port
+
+Set the TCP port (default: 6379):
+
+```conf
+port 6379
+
+# Disable TCP socket
+port 0
+```
+
+#### tcp-backlog
+
+Set the TCP listen() backlog for high-traffic environments:
+
+```conf
+tcp-backlog 511
+```
+
+<Note>
+On Linux, ensure `/proc/sys/net/core/somaxconn` and `tcp_max_syn_backlog` are set appropriately.
+</Note>
+
+#### tcp-keepalive
+
+Send TCP keepalive messages to detect dead peers:
+
+```conf
+# Send ACKs every 300 seconds
+tcp-keepalive 300
+```
+
+#### timeout
+
+Close idle client connections after N seconds (0 to disable):
+
+```conf
+# Close connections idle for 300 seconds
+timeout 300
+
+# Never close idle connections
+timeout 0
+```
+
+### General Configuration
+
+#### daemonize
+
+Run Redis as a daemon:
+
+```conf
+daemonize yes
+```
+
+#### pidfile
+
+Specify the PID file location:
+
+```conf
+pidfile /var/run/redis_6379.pid
+```
+
+#### loglevel
+
+Set the server verbosity level:
+
+```conf
+# Options: debug, verbose, notice, warning, nothing
+loglevel notice
+```
+
+#### logfile
+
+Specify the log file path:
+
+```conf
+# Log to file
+logfile /var/log/redis/redis-server.log
+
+# Log to stdout
+logfile ""
+```
+
+#### databases
+
+Set the number of databases:
+
+```conf
+# Default is 16 databases (0-15)
+databases 16
+```
+
+### Snapshotting Configuration
+
+#### save
+
+Configure automatic RDB snapshots:
+
+```conf
+# Save after 3600 seconds if at least 1 key changed
+# Save after 300 seconds if at least 100 keys changed
+# Save after 60 seconds if at least 10000 keys changed
+save 3600 1 300 100 60 10000
+
+# Disable snapshotting
+save ""
+```
+
+#### stop-writes-on-bgsave-error
+
+Stop accepting writes if background save fails:
+
+```conf
+stop-writes-on-bgsave-error yes
+```
+
+#### rdbcompression
+
+Compress RDB files using LZF:
+
+```conf
+rdbcompression yes
+```
+
+#### rdbchecksum
+
+Add CRC64 checksum to RDB files:
+
+```conf
+rdbchecksum yes
+```
+
+#### dbfilename
+
+Set the RDB filename:
+
+```conf
+dbfilename dump.rdb
+```
+
+#### dir
+
+Set the working directory for RDB and AOF files:
+
+```conf
+dir ./
+```
+
+### Memory Management
+
+#### maxmemory
+
+Set a memory usage limit:
+
+```conf
+# Set 2GB limit
+maxmemory 2gb
+
+# No limit (default)
+# maxmemory 0
+```
+
+<Warning>
+When using replicas, set `maxmemory` lower than available RAM to account for replica output buffers.
+</Warning>
+
+#### maxmemory-policy
+
+Define eviction policy when maxmemory is reached:
+
+```conf
+# Available policies:
+# volatile-lru - Evict using LRU, only keys with expire set
+# allkeys-lru - Evict any key using LRU
+# volatile-lfu - Evict using LFU, only keys with expire set
+# allkeys-lfu - Evict any key using LFU
+# volatile-lrm - Evict using LRM, only keys with expire set
+# allkeys-lrm - Evict any key using LRM
+# volatile-random - Remove random key with expire set
+# allkeys-random - Remove random key
+# volatile-ttl - Remove key with nearest expire time
+# noeviction - Return errors on write operations (default)
+
+maxmemory-policy noeviction
+```
+
+**LRU vs LRM:**
+- **LRU** (Least Recently Used): Updates timestamp on both read and write operations
+- **LRM** (Least Recently Modified): Updates timestamp only on write operations
+- **LFU** (Least Frequently Used): Tracks access frequency
+
+#### maxmemory-samples
+
+Number of keys to sample for eviction algorithms:
+
+```conf
+# Default is 5, higher is more accurate but slower
+maxmemory-samples 5
+```
+
+### Client Configuration
+
+#### maxclients
+
+Maximum number of simultaneous client connections:
+
+```conf
+maxclients 10000
+```
+
+<Note>
+In Redis Cluster, each node uses two connections (incoming and outgoing), so size accordingly.
+</Note>
+
+## Module Loading
+
+Load Redis modules at startup:
+
+```conf
+loadmodule /path/to/my_module.so
+loadmodule /path/to/other_module.so
+loadmodule /path/to/module.so arg1 arg2 arg3
+```
+
+## Including Configuration Files
+
+Include additional configuration files:
+
+```conf
+# Include single file
+include /path/to/local.conf
+
+# Include with wildcards
+include /path/to/fragments/*.conf
+```
+
+<Note>
+Include directives at the beginning of the file for base configuration, or at the end to override settings.
+</Note>
+
+## Configuration Management Best Practices
+
+<Steps>
+
+### Use Version Control
+
+Store your `redis.conf` in version control to track changes and enable rollback.
+
+### Test Configuration Changes
+
+Before applying to production:
+
+```bash
+# Test configuration file syntax
+redis-server /path/to/redis.conf --test-memory 1
+
+# Use CONFIG SET to test changes before persisting
+CONFIG SET maxmemory 2gb
+# Verify behavior, then:
+CONFIG REWRITE
+```
+
+### Monitor Configuration
+
+Regularly audit your configuration:
+
+```bash
+# Get all configuration
+CONFIG GET *
+
+# Check specific security settings
+CONFIG GET bind
+CONFIG GET protected-mode
+CONFIG GET requirepass
+```
+
+### Document Custom Settings
+
+Add comments explaining why specific values were chosen:
+
+```conf
+# Increased maxclients for high-traffic application
+# Based on load testing results from 2024-01-15
+maxclients 50000
+```
+
+</Steps>
+
+## Runtime Configuration Examples
+
+### Example: Adjust Memory Settings
+
+```bash
+# Check current memory usage
+INFO memory
+
+# Set memory limit and eviction policy
+CONFIG SET maxmemory 4gb
+CONFIG SET maxmemory-policy allkeys-lru
+
+# Persist changes
+CONFIG REWRITE
+```
+
+### Example: Enable Logging
+
+```bash
+# Change log level for debugging
+CONFIG SET loglevel debug
+
+# Change log file location
+CONFIG SET logfile /var/log/redis/debug.log
+
+# Revert after debugging
+CONFIG SET loglevel notice
+```
+
+### Example: Adjust Snapshot Frequency
+
+```bash
+# More frequent snapshots for critical data
+CONFIG SET save "900 1 300 10 60 10000"
+
+# Persist configuration
+CONFIG REWRITE
+```
+
+## Configuration Reset
+
+Reset specific configuration parameters to their default values by using `CONFIG SET` with appropriate values, or edit `redis.conf` and restart Redis.
+
+## See Also
+
+- [Security Configuration](/operations/security)
+- [Monitoring](/operations/monitoring)
+- [Performance Tuning](/operations/performance-tuning)
+- [TLS Configuration](/operations/tls)

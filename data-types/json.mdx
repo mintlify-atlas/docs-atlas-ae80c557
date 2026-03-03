@@ -1,0 +1,348 @@
+---
+title: JSON
+description: Native JSON document storage with JSONPath queries - requires BUILD_WITH_MODULES=yes
+---
+
+Redis JSON provides native JSON document storage with atomic operations, JSONPath queries, and efficient updates. It's part of the Redis modules and requires compilation with `BUILD_WITH_MODULES=yes`.
+
+<Warning>
+JSON support requires building Redis with `BUILD_WITH_MODULES=yes`. See the [installation guide](/installation) for details.
+</Warning>
+
+## Use Cases
+
+- **Document database**: Store and query JSON documents
+- **User profiles**: Complex nested user data
+- **Product catalogs**: Rich product information
+- **Configuration storage**: Application settings
+- **API caching**: Cache JSON API responses
+- **Event data**: Structured event payloads
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Set JSON document
+redis> JSON.SET user:1001 $ '{"name":"Alice","email":"alice@example.com","age":30}'
+OK
+
+# Get entire document
+redis> JSON.GET user:1001
+"{\"name\":\"Alice\",\"email\":\"alice@example.com\",\"age\":30}"
+
+# Get specific field
+redis> JSON.GET user:1001 $.name
+"[\"Alice\"]"
+
+# Get multiple paths
+redis> JSON.GET user:1001 $.name $.email
+"{\"$.name\":[\"Alice\"],\"$.email\":[\"alice@example.com\"]}"
+
+# Delete document
+redis> JSON.DEL user:1001
+(integer) 1
+```
+
+### Path Operations
+
+```bash
+# Set nested value
+redis> JSON.SET user:1001 $ '{"name":"Alice","address":{"city":"NYC"}}'
+OK
+
+# Update nested field
+redis> JSON.SET user:1001 $.address.zip "10001"
+OK
+
+# Get nested value
+redis> JSON.GET user:1001 $.address.city
+"[\"NYC\"]"
+
+# Delete path
+redis> JSON.DEL user:1001 $.address.zip
+(integer) 1
+```
+
+### Array Operations
+
+```bash
+# Set document with array
+redis> JSON.SET user:1001 $ '{"name":"Alice","tags":["developer","redis"]}'
+OK
+
+# Append to array
+redis> JSON.ARRAPPEND user:1001 $.tags '"python"'
+[3]
+
+# Insert into array
+redis> JSON.ARRINSERT user:1001 $.tags 0 '"senior"'
+[4]
+
+# Get array length
+redis> JSON.ARRLEN user:1001 $.tags
+[4]
+
+# Pop from array
+redis> JSON.ARRPOP user:1001 $.tags -1
+"\"python\""
+
+# Trim array
+redis> JSON.ARRTRIM user:1001 $.tags 0 1
+[2]
+```
+
+### Numeric Operations
+
+```bash
+# Set numeric field
+redis> JSON.SET stats $ '{"views":100,"likes":25}'
+OK
+
+# Increment
+redis> JSON.NUMINCRBY stats $.views 1
+"[101]"
+
+# Multiply
+redis> JSON.NUMMULTBY stats $.likes 2
+"[50]"
+```
+
+### String Operations
+
+```bash
+# Append to string
+redis> JSON.SET user:1001 $ '{"name":"Alice"}'
+OK
+redis> JSON.STRAPPEND user:1001 $.name '" Smith"'
+[11]
+
+# Get string length
+redis> JSON.STRLEN user:1001 $.name
+[11]
+```
+
+## JSONPath Syntax
+
+Redis JSON supports JSONPath for querying:
+
+- `$`: Root
+- `.key`: Child member
+- `[index]`: Array index
+- `[*]`: All array elements
+- `..key`: Recursive descent
+- `[?(@.key > value)]`: Filter expressions
+
+```bash
+# Complex document
+redis> JSON.SET products $ '[
+  {"id":1,"name":"Redis Book","price":29.99,"inStock":true},
+  {"id":2,"name":"JSON Guide","price":19.99,"inStock":false}
+]'
+OK
+
+# Get all names
+redis> JSON.GET products $[*].name
+"[\"Redis Book\",\"JSON Guide\"]"
+
+# Get in-stock products
+redis> JSON.GET products $[?(@.inStock==true)]
+"[{\"id\":1,\"name\":\"Redis Book\",\"price\":29.99,\"inStock\":true}]"
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| JSON.SET | O(M+N) | M=path, N=value size |
+| JSON.GET | O(M+N) | M=path, N=result size |
+| JSON.DEL | O(N) | N=keys deleted |
+| JSON.ARRAPPEND | O(1) | Append to array |
+| JSON.ARRINSERT | O(N) | N=array size |
+| JSON.ARRLEN | O(1) | Get array length |
+| JSON.NUMINCRBY | O(1) | Increment number |
+| JSON.STRLEN | O(1) | Get string length |
+
+## Patterns and Examples
+
+### User Profile
+
+```bash
+# Create profile
+redis> JSON.SET profile:alice $ '{
+  "username": "alice",
+  "email": "alice@example.com",
+  "preferences": {
+    "theme": "dark",
+    "notifications": true
+  },
+  "tags": ["developer", "redis"],
+  "stats": {
+    "posts": 42,
+    "followers": 156
+  }
+}'
+OK
+
+# Update preference
+redis> JSON.SET profile:alice $.preferences.theme '"light"'
+OK
+
+# Add tag
+redis> JSON.ARRAPPEND profile:alice $.tags '"python"'
+[3]
+
+# Increment post count
+redis> JSON.NUMINCRBY profile:alice $.stats.posts 1
+"[43]"
+
+# Get specific fields
+redis> JSON.GET profile:alice $.username $.stats.posts
+"{\"$.username\":[\"alice\"],\"$.stats.posts\":[43]}"
+```
+
+### Product Catalog
+
+```bash
+# Add product
+redis> JSON.SET product:2001 $ '{
+  "id": 2001,
+  "name": "Redis Book",
+  "description": "Comprehensive Redis guide",
+  "price": 29.99,
+  "stock": 150,
+  "categories": ["books", "database", "redis"],
+  "metadata": {
+    "author": "John Doe",
+    "pages": 350,
+    "isbn": "123-456-789"
+  },
+  "reviews": []
+}'
+OK
+
+# Update stock
+redis> JSON.NUMINCRBY product:2001 $.stock -1
+"[149]"
+
+# Add review
+redis> JSON.ARRAPPEND product:2001 $.reviews '{
+  "user": "alice",
+  "rating": 5,
+  "comment": "Excellent!"
+}'
+[1]
+
+# Update price
+redis> JSON.SET product:2001 $.price 24.99
+OK
+```
+
+### API Response Caching
+
+```bash
+# Cache API response
+redis> JSON.SET cache:api:/users/123 $ '{
+  "data": {
+    "id": 123,
+    "name": "Alice",
+    "email": "alice@example.com"
+  },
+  "meta": {
+    "cached_at": 1709467200,
+    "ttl": 3600
+  }
+}'
+OK
+
+# Set expiration
+redis> EXPIRE cache:api:/users/123 3600
+(integer) 1
+
+# Get cached data
+redis> JSON.GET cache:api:/users/123 $.data
+```
+
+### Configuration Management
+
+```bash
+# Store app config
+redis> JSON.SET config:app $ '{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "pool_size": 10
+  },
+  "cache": {
+    "enabled": true,
+    "ttl": 3600
+  },
+  "features": {
+    "beta_features": ["feature1", "feature2"]
+  }
+}'
+OK
+
+# Update config value
+redis> JSON.SET config:app $.cache.ttl 7200
+OK
+
+# Toggle feature
+redis> JSON.SET config:app $.cache.enabled false
+OK
+
+# Get config section
+redis> JSON.GET config:app $.database
+```
+
+## JSON vs String
+
+| Operation | JSON Module | String (serialized JSON) |
+|-----------|-------------|-------------------------|
+| Update field | Direct path update | Deserialize, update, serialize |
+| Query nested | JSONPath | Deserialize entire object |
+| Atomicity | Atomic operations | Manual locking |
+| Performance | Faster for updates | Faster for full reads |
+| Memory | Optimized | Standard |
+
+## Best Practices
+
+1. **Use JSONPath** for efficient nested updates
+2. **Set expiration** on cached documents
+3. **Keep documents focused** - avoid very large documents
+4. **Index with RediSearch** for complex queries
+5. **Use atomic operations** instead of get-modify-set
+
+<Tip>
+For complex queries across multiple documents, combine Redis JSON with RediSearch to create indexes and perform full-text search, aggregations, and filtering.
+</Tip>
+
+<Warning>
+Very large JSON documents (over 1MB) can impact performance. Consider splitting into multiple keys or using compression.
+</Warning>
+
+## Integration with RediSearch
+
+Combine JSON with RediSearch for powerful querying:
+
+```bash
+# Create index on JSON documents
+redis> FT.CREATE idx:users ON JSON PREFIX 1 user: SCHEMA 
+  $.name AS name TEXT 
+  $.email AS email TAG 
+  $.age AS age NUMERIC
+
+# Search users
+redis> FT.SEARCH idx:users "@age:[25 35]" RETURN 3 $.name $.email $.age
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Query Engine" href="/features/query-engine">
+    Search and index JSON documents
+  </Card>
+  <Card title="Hashes" href="/data-types/hashes">
+    For simpler key-value objects
+  </Card>
+</CardGroup>

@@ -1,0 +1,416 @@
+---
+title: Java Clients (Jedis & Lettuce)
+description: Connect to Redis from Java using Jedis or Lettuce, the official Java clients
+---
+
+Redis provides two official Java clients: **Jedis** and **Lettuce**. Both offer full support for Redis commands and features, but with different architectural approaches.
+
+## Choosing Between Jedis and Lettuce
+
+<CardGroup cols={2}>
+  <Card title="Jedis" icon="bolt">
+    **Best for:** Simple, synchronous applications
+    
+    - Easy to use
+    - Synchronous API
+    - Lower overhead
+    - Thread-safe with connection pooling
+  </Card>
+  
+  <Card title="Lettuce" icon="leaf">
+    **Best for:** High-performance, async applications
+    
+    - Reactive programming support
+    - Async and sync APIs
+    - Thread-safe connections
+    - Better for high concurrency
+  </Card>
+</CardGroup>
+
+## Jedis Client
+
+### Installation
+
+Add Jedis to your project:
+
+<CodeGroup>
+```xml Maven
+<dependency>
+    <groupId>redis.clients</groupId>
+    <artifactId>jedis</artifactId>
+    <version>5.1.0</version>
+</dependency>
+```
+
+```groovy Gradle
+dependencies {
+    implementation 'redis.clients:jedis:5.1.0'
+}
+```
+</CodeGroup>
+
+### Quick Start with Jedis
+
+<Steps>
+  <Step title="Create a connection">
+    Connect to Redis using Jedis:
+    
+    ```java
+    import redis.clients.jedis.Jedis;
+    import redis.clients.jedis.JedisPool;
+    import redis.clients.jedis.JedisPoolConfig;
+    
+    public class RedisExample {
+        public static void main(String[] args) {
+            // Create connection pool
+            JedisPoolConfig poolConfig = new JedisPoolConfig();
+            poolConfig.setMaxTotal(10);
+            poolConfig.setMaxIdle(5);
+            poolConfig.setMinIdle(1);
+            
+            JedisPool pool = new JedisPool(poolConfig, "localhost", 6379);
+            
+            // Get a connection from the pool
+            try (Jedis jedis = pool.getResource()) {
+                String response = jedis.ping();
+                System.out.println("Connected: " + response);
+            }
+            
+            pool.close();
+        }
+    }
+    ```
+    
+    <Tip>
+      Always use `JedisPool` in production applications. It manages connections efficiently and is thread-safe.
+    </Tip>
+  </Step>
+  
+  <Step title="Perform basic operations">
+    Execute Redis commands:
+    
+    ```java
+    try (Jedis jedis = pool.getResource()) {
+        // SET and GET operations
+        jedis.set("user:1:name", "Alice");
+        String name = jedis.get("user:1:name");
+        System.out.println("Name: " + name);  // Output: Name: Alice
+        
+        // Work with numbers
+        jedis.set("counter", "0");
+        jedis.incr("counter");
+        jedis.incrBy("counter", 5);
+        String count = jedis.get("counter");
+        System.out.println("Counter: " + count);  // Output: Counter: 6
+        
+        // Expiration
+        jedis.setex("session:abc", 3600, "session_data");  // Expires in 1 hour
+    }
+    ```
+  </Step>
+  
+  <Step title="Handle errors">
+    Implement proper error handling:
+    
+    ```java
+    import redis.clients.jedis.exceptions.JedisConnectionException;
+    import redis.clients.jedis.exceptions.JedisDataException;
+    
+    try (Jedis jedis = pool.getResource()) {
+        jedis.set("key", "value");
+        String value = jedis.get("key");
+        System.out.println(value);
+        
+    } catch (JedisConnectionException e) {
+        System.err.println("Connection error: " + e.getMessage());
+    } catch (JedisDataException e) {
+        System.err.println("Data error: " + e.getMessage());
+    } catch (Exception e) {
+        System.err.println("Unexpected error: " + e.getMessage());
+    }
+    ```
+  </Step>
+</Steps>
+
+### Jedis Connection Patterns
+
+#### Secure TLS Connection
+
+```java
+import redis.clients.jedis.DefaultJedisClientConfig;
+import redis.clients.jedis.HostAndPort;
+import redis.clients.jedis.JedisClientConfig;
+
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocketFactory;
+
+SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+SSLParameters sslParameters = new SSLParameters();
+
+JedisClientConfig config = DefaultJedisClientConfig.builder()
+    .password("your-password")
+    .ssl(true)
+    .sslSocketFactory(sslSocketFactory)
+    .sslParameters(sslParameters)
+    .build();
+
+JedisPool pool = new JedisPool(
+    new HostAndPort("your-redis-host.com", 6380),
+    config
+);
+```
+
+#### Redis Cloud Connection
+
+```java
+JedisClientConfig config = DefaultJedisClientConfig.builder()
+    .password("your-password")
+    .ssl(true)
+    .build();
+
+JedisPool pool = new JedisPool(
+    new HostAndPort("your-endpoint.redis.cloud", 12345),
+    config
+);
+```
+
+### Working with Data Structures in Jedis
+
+#### Hashes
+
+```java
+import java.util.HashMap;
+import java.util.Map;
+
+try (Jedis jedis = pool.getResource()) {
+    // Store user data as a hash
+    Map<String, String> user = new HashMap<>();
+    user.put("name", "Alice");
+    user.put("email", "alice@example.com");
+    user.put("age", "30");
+    jedis.hset("user:1", user);
+    
+    // Get specific field
+    String name = jedis.hget("user:1", "name");
+    
+    // Get all fields
+    Map<String, String> userData = jedis.hgetAll("user:1");
+    
+    // Increment numeric field
+    jedis.hincrBy("user:1", "age", 1);
+}
+```
+
+#### Lists
+
+```java
+try (Jedis jedis = pool.getResource()) {
+    // Add items to a list
+    jedis.rpush("queue", "task1", "task2", "task3");
+    
+    // Get list length
+    long length = jedis.llen("queue");
+    
+    // Pop item from list
+    String task = jedis.lpop("queue");
+    
+    // Get range of items
+    List<String> tasks = jedis.lrange("queue", 0, -1);
+}
+```
+
+#### Sets
+
+```java
+try (Jedis jedis = pool.getResource()) {
+    // Add members to a set
+    jedis.sadd("tags", "python", "redis", "database");
+    
+    // Check membership
+    boolean isMember = jedis.sismember("tags", "python");
+    
+    // Get all members
+    Set<String> tags = jedis.smembers("tags");
+    
+    // Set operations
+    jedis.sadd("tags2", "redis", "cache", "nosql");
+    Set<String> common = jedis.sinter("tags", "tags2");
+}
+```
+
+### Jedis Advanced Features
+
+#### Pipelining
+
+```java
+try (Jedis jedis = pool.getResource()) {
+    Pipeline pipe = jedis.pipelined();
+    
+    pipe.set("key1", "value1");
+    pipe.set("key2", "value2");
+    pipe.incr("counter");
+    Response<String> value = pipe.get("key1");
+    
+    pipe.sync();  // Execute all commands
+    
+    System.out.println(value.get());  // value1
+}
+```
+
+#### Transactions
+
+```java
+try (Jedis jedis = pool.getResource()) {
+    Transaction trans = jedis.multi();
+    
+    trans.set("key1", "value1");
+    trans.set("key2", "value2");
+    trans.incr("counter");
+    
+    List<Object> results = trans.exec();  // Execute atomically
+}
+```
+
+## Lettuce Client
+
+### Installation
+
+Add Lettuce to your project:
+
+<CodeGroup>
+```xml Maven
+<dependency>
+    <groupId>io.lettuce</groupId>
+    <artifactId>lettuce-core</artifactId>
+    <version>6.3.0.RELEASE</version>
+</dependency>
+```
+
+```groovy Gradle
+dependencies {
+    implementation 'io.lettuce:lettuce-core:6.3.0.RELEASE'
+}
+```
+</CodeGroup>
+
+### Quick Start with Lettuce
+
+<Steps>
+  <Step title="Create a connection">
+    Connect to Redis using Lettuce:
+    
+    ```java
+    import io.lettuce.core.RedisClient;
+    import io.lettuce.core.RedisURI;
+    import io.lettuce.core.api.StatefulRedisConnection;
+    import io.lettuce.core.api.sync.RedisCommands;
+    
+    public class LettuceExample {
+        public static void main(String[] args) {
+            // Create Redis client
+            RedisURI redisUri = RedisURI.builder()
+                .withHost("localhost")
+                .withPort(6379)
+                .build();
+            
+            RedisClient client = RedisClient.create(redisUri);
+            StatefulRedisConnection<String, String> connection = client.connect();
+            RedisCommands<String, String> commands = connection.sync();
+            
+            String response = commands.ping();
+            System.out.println("Connected: " + response);
+            
+            connection.close();
+            client.shutdown();
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="Perform basic operations">
+    Execute Redis commands synchronously:
+    
+    ```java
+    // SET and GET operations
+    commands.set("user:1:name", "Alice");
+    String name = commands.get("user:1:name");
+    System.out.println("Name: " + name);
+    
+    // Work with numbers
+    commands.set("counter", "0");
+    commands.incr("counter");
+    commands.incrby("counter", 5);
+    String count = commands.get("counter");
+    System.out.println("Counter: " + count);
+    
+    // Expiration
+    commands.setex("session:abc", 3600, "session_data");
+    ```
+  </Step>
+  
+  <Step title="Use async operations">
+    Leverage Lettuce's asynchronous API:
+    
+    ```java
+    import io.lettuce.core.api.async.RedisAsyncCommands;
+    import io.lettuce.core.RedisFuture;
+    
+    RedisAsyncCommands<String, String> async = connection.async();
+    
+    RedisFuture<String> future = async.get("key");
+    
+    future.thenAccept(value -> {
+        System.out.println("Value: " + value);
+    });
+    
+    // Wait for completion if needed
+    String result = future.get();
+    ```
+  </Step>
+</Steps>
+
+### Lettuce Reactive API
+
+For reactive programming with Project Reactor:
+
+```java
+import io.lettuce.core.api.reactive.RedisReactiveCommands;
+import reactor.core.publisher.Mono;
+
+RedisReactiveCommands<String, String> reactive = connection.reactive();
+
+Mono<String> mono = reactive.get("key");
+
+mono.subscribe(
+    value -> System.out.println("Value: " + value),
+    error -> System.err.println("Error: " + error),
+    () -> System.out.println("Completed")
+);
+```
+
+## Starter Project
+
+<Card 
+  title="Redis Java Starter Project" 
+  icon="github" 
+  href="https://github.com/redis-developer/redis-starter-java"
+>
+  Clone the official starter project with Spring Boot, Jedis examples, and best practices.
+</Card>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Jedis Documentation" icon="book" href="https://redis.io/docs/latest/develop/clients/jedis/">
+    Official Jedis documentation
+  </Card>
+  <Card title="Lettuce Documentation" icon="book" href="https://redis.io/docs/latest/develop/clients/lettuce/">
+    Official Lettuce documentation
+  </Card>
+  <Card title="Redis Commands" icon="terminal" href="https://redis.io/commands/">
+    Complete Redis command reference
+  </Card>
+  <Card title="Data Types Guide" icon="database" href="https://redis.io/docs/latest/develop/data-types/">
+    Learn about Redis data structures
+  </Card>
+</CardGroup>

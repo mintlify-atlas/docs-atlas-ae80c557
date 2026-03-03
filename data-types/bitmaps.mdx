@@ -1,0 +1,361 @@
+---
+title: Bitmaps
+description: Bit-level operations on strings for efficient analytics, permissions, and flags
+---
+
+Redis bitmaps are not a separate data type but bit-level operations on strings. They provide space-efficient storage for binary flags, user activity tracking, and analytics with up to 512MB (4 billion bits) per key.
+
+## Use Cases
+
+- **User activity tracking**: Daily active users, feature usage
+- **Permissions and flags**: User roles, feature flags
+- **Real-time analytics**: Unique visitors, conversion tracking
+- **A/B testing**: Experiment participation tracking
+- **Bloom filters**: Approximate set membership
+- **Attendance tracking**: Event participation, presence
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Set bit at offset
+redis> SETBIT users:active:2024-03-03 123 1
+(integer) 0
+redis> SETBIT users:active:2024-03-03 456 1
+(integer) 0
+
+# Get bit at offset
+redis> GETBIT users:active:2024-03-03 123
+(integer) 1
+redis> GETBIT users:active:2024-03-03 789
+(integer) 0
+
+# Count set bits
+redis> BITCOUNT users:active:2024-03-03
+(integer) 2
+
+# Count in range (byte offsets)
+redis> BITCOUNT users:active:2024-03-03 0 10
+(integer) 2
+```
+
+### Bit Operations
+
+```bash
+# Set multiple bits
+redis> SETBIT day1 0 1
+(integer) 0
+redis> SETBIT day1 1 0
+(integer) 0
+redis> SETBIT day1 2 1
+(integer) 0
+
+redis> SETBIT day2 0 1
+(integer) 0
+redis> SETBIT day2 1 1
+(integer) 0
+redis> SETBIT day2 2 0
+(integer) 0
+
+# AND operation (users active both days)
+redis> BITOP AND result day1 day2
+(integer) 1
+redis> BITCOUNT result
+(integer) 1
+
+# OR operation (users active either day)
+redis> BITOP OR result day1 day2
+(integer) 1
+redis> BITCOUNT result
+(integer) 3
+
+# XOR operation (users active only one day)
+redis> BITOP XOR result day1 day2
+(integer) 1
+redis> BITCOUNT result
+(integer) 2
+
+# NOT operation (invert bits)
+redis> BITOP NOT result day1
+(integer) 1
+```
+
+### Position Operations
+
+```bash
+# Find first set bit
+redis> SETBIT bits 10 1
+(integer) 0
+redis> SETBIT bits 20 1
+(integer) 0
+redis> BITPOS bits 1
+(integer) 10
+
+# Find first clear bit
+redis> BITPOS bits 0
+(integer) 0
+
+# Find in range
+redis> BITPOS bits 1 0 2
+(integer) 10
+```
+
+### Bitfield Operations
+
+```bash
+# Set integer value at bit position
+redis> BITFIELD stats SET u8 0 255
+1) (integer) 0
+
+# Get integer value
+redis> BITFIELD stats GET u8 0
+1) (integer) 255
+
+# Increment
+redis> BITFIELD stats INCRBY u8 0 1
+1) (integer) 256
+
+# Multiple operations
+redis> BITFIELD stats 
+  SET u4 0 15 
+  GET u4 0 
+  INCRBY u4 0 1
+1) (integer) 0
+2) (integer) 15
+3) (integer) 0
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| SETBIT | O(1) | Set bit value |
+| GETBIT | O(1) | Get bit value |
+| BITCOUNT | O(N) | N=bytes (with AVX2: very fast) |
+| BITPOS | O(N) | N=bytes scanned |
+| BITOP | O(N) | N=longest string |
+| BITFIELD | O(1) per operation | Multiple field operations |
+
+<Note>
+BITCOUNT is highly optimized with AVX2/AVX512/NEON SIMD instructions on modern CPUs, making it extremely fast even for large bitmaps.
+</Note>
+
+## Patterns and Examples
+
+### Daily Active Users
+
+```bash
+# Mark users active (user ID as bit offset)
+redis> SETBIT users:active:2024-03-03 1001 1
+(integer) 0
+redis> SETBIT users:active:2024-03-03 1002 1
+(integer) 0
+redis> SETBIT users:active:2024-03-03 5000 1
+(integer) 0
+
+# Count daily active users
+redis> BITCOUNT users:active:2024-03-03
+(integer) 3
+
+# Check if user was active
+redis> GETBIT users:active:2024-03-03 1001
+(integer) 1
+
+# Find users active both days
+redis> BITOP AND active_both users:active:2024-03-03 users:active:2024-03-04
+(integer) 625
+redis> BITCOUNT active_both
+(integer) 2
+
+# Monthly active users (union of all days)
+redis> BITOP OR mau:2024-03 users:active:2024-03-01 users:active:2024-03-02 ...
+(integer) 625
+redis> BITCOUNT mau:2024-03
+(integer) 4523
+```
+
+### Feature Flags
+
+```bash
+# Define feature bits: 0=beta, 1=premium, 2=admin, 3=verified
+redis> SETBIT user:1001:flags 0 1  # Beta access
+(integer) 0
+redis> SETBIT user:1001:flags 3 1  # Verified
+(integer) 0
+
+# Check if user has feature
+redis> GETBIT user:1001:flags 0
+(integer) 1  # Has beta access
+
+redis> GETBIT user:1001:flags 2
+(integer) 0  # Not admin
+
+# Grant premium feature
+redis> SETBIT user:1001:flags 1 1
+(integer) 0
+
+# Revoke beta access
+redis> SETBIT user:1001:flags 0 0
+(integer) 1
+```
+
+### Real-Time Analytics
+
+```bash
+# Track unique visitors per hour (IP hash as offset)
+redis> SETBIT visitors:2024-03-03:10 12345 1
+(integer) 0
+redis> SETBIT visitors:2024-03-03:10 67890 1
+(integer) 0
+
+# Get unique visitors for hour
+redis> BITCOUNT visitors:2024-03-03:10
+(integer) 2
+
+# Unique visitors for entire day
+redis> BITOP OR visitors:2024-03-03 
+  visitors:2024-03-03:00 
+  visitors:2024-03-03:01 
+  ...
+  visitors:2024-03-03:23
+(integer) 1250
+redis> BITCOUNT visitors:2024-03-03
+(integer) 8945
+```
+
+### User Permissions
+
+```bash
+# Permission bits: 0=read, 1=write, 2=delete, 3=admin
+redis> SETBIT perms:user:123:doc:456 0 1  # Read
+(integer) 0
+redis> SETBIT perms:user:123:doc:456 1 1  # Write
+(integer) 0
+
+# Check permission
+redis> GETBIT perms:user:123:doc:456 2
+(integer) 0  # No delete permission
+
+# Grant all permissions
+redis> SETBIT perms:user:123:doc:456 0 1
+redis> SETBIT perms:user:123:doc:456 1 1
+redis> SETBIT perms:user:123:doc:456 2 1
+redis> SETBIT perms:user:123:doc:456 3 1
+```
+
+### Attendance Tracking
+
+```bash
+# Track attendance (day of year as bit)
+redis> SETBIT attendance:student:123:2024 62 1  # March 3rd (day 62)
+(integer) 0
+redis> SETBIT attendance:student:123:2024 63 1  # March 4th
+(integer) 0
+
+# Count days present
+redis> BITCOUNT attendance:student:123:2024
+(integer) 2
+
+# Find first absence
+redis> BITPOS attendance:student:123:2024 0
+(integer) 0  # Day 0 (Jan 1st)
+
+# Check specific day
+redis> GETBIT attendance:student:123:2024 62
+(integer) 1  # Present
+```
+
+## Memory Efficiency
+
+Bitmaps are extremely space-efficient:
+
+```bash
+# Track 1 million users: only 125KB
+# 1,000,000 bits / 8 = 125,000 bytes = 125 KB
+
+redis> SETBIT users 1000000 1
+(integer) 0
+redis> MEMORY USAGE users
+(integer) 125056  # ~125KB
+
+# Compare with set of 1M user IDs: ~15-20MB
+redis> SADD users_set user:1 user:2 ... user:1000000
+# Much larger memory usage
+```
+
+## Sparse vs Dense Bitmaps
+
+```bash
+# Sparse bitmap (few bits set)
+redis> SETBIT sparse 1000000 1
+(integer) 0
+redis> MEMORY USAGE sparse
+(integer) 125032  # Still allocates full range
+
+# For sparse data, consider sets
+redis> SADD sparse_set 1000000
+(integer) 1
+redis> MEMORY USAGE sparse_set
+(integer) 296  # Much smaller for sparse data
+```
+
+<Warning>
+Bitmaps allocate memory based on the highest bit offset. SETBIT at offset 1 billion requires 125MB even if only one bit is set. For sparse data, use sets or hashes instead.
+</Warning>
+
+## Best Practices
+
+1. **Use for dense data** - when most IDs in a range are used
+2. **Combine with BITOP** for efficient set operations
+3. **Set expiration** on daily/hourly bitmaps
+4. **Use consistent key naming** for easy BITOP operations
+5. **Consider sets** for sparse data (few bits set)
+
+<Tip>
+For optimal performance with BITOP on large bitmaps, ensure all operand keys exist. Missing keys are treated as all zeros but still affect performance.
+</Tip>
+
+## Bitmaps vs Other Types
+
+| Use Case | Bitmap | Set | HyperLogLog |
+|----------|--------|-----|-------------|
+| Dense IDs (0-1M) | Best | High memory | Approximate |
+| Sparse IDs | High memory | Best | Approximate |
+| Exact count | Yes | Yes | No (±0.81%) |
+| Set operations | BITOP (fast) | SINTER/SUNION | No |
+| Memory (1M IDs) | 125KB | 15-20MB | 12KB |
+| Best for | Sequential IDs | Sparse IDs | Counting only |
+
+## Advanced: Bitfield
+
+Store multiple integers in a single string:
+
+```bash
+# Store RGB color (3 bytes)
+redis> BITFIELD color SET u8 0 255 SET u8 8 128 SET u8 16 64
+1) (integer) 0
+2) (integer) 0
+3) (integer) 0
+
+# Get RGB values
+redis> BITFIELD color GET u8 0 GET u8 8 GET u8 16
+1) (integer) 255
+2) (integer) 128
+3) (integer) 64
+
+# Increment red channel
+redis> BITFIELD color INCRBY u8 0 10
+1) (integer) 265
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="String Commands" href="/commands/strings">
+    Bitmap command reference
+  </Card>
+  <Card title="HyperLogLog" href="/data-types/hyperloglogs">
+    For approximate counting
+  </Card>
+</CardGroup>

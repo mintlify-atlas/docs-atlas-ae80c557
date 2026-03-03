@@ -1,0 +1,166 @@
+---
+title: 'Modules API Overview'
+description: 'Extend Redis functionality with custom modules'
+---
+
+Redis modules provide a powerful API that allows you to extend Redis with new data types, commands, and functionality. The modules API enables developers to write modules in C that integrate seamlessly with the Redis core.
+
+## What are Redis Modules?
+
+Redis modules are dynamic libraries that can be loaded into Redis at runtime to extend its functionality. Modules can:
+
+- Define new data types with custom encoding, persistence, and replication
+- Register new commands that operate on native or custom data types
+- Subscribe to keyspace events and server events
+- Implement complex operations with access to Redis internals
+- Share APIs with other modules
+
+## Module Architecture
+
+Every module must implement the `RedisModule_OnLoad` entry point function, which is called when the module is loaded:
+
+```c
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (RedisModule_Init(ctx, "mymodule", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+    
+    // Register commands, data types, etc.
+    
+    return REDISMODULE_OK;
+}
+```
+
+## Core API Components
+
+The Redis modules API is defined in `src/redismodule.h` and provides several key components:
+
+### Context Management
+
+- **RedisModuleCtx**: The context object passed to module commands and callbacks
+- Thread-safe contexts for background operations
+- Auto-memory management for temporary allocations
+
+### Memory Management
+
+```c
+void *RedisModule_Alloc(size_t bytes);
+void *RedisModule_Realloc(void *ptr, size_t bytes);
+void RedisModule_Free(void *ptr);
+char *RedisModule_Strdup(const char *str);
+```
+
+All module memory allocations are tracked by Redis and count toward memory limits.
+
+### String Operations
+
+```c
+RedisModuleString *RedisModule_CreateString(RedisModuleCtx *ctx, const char *ptr, size_t len);
+RedisModuleString *RedisModule_CreateStringFromLongLong(RedisModuleCtx *ctx, long long ll);
+const char *RedisModule_StringPtrLen(const RedisModuleString *str, size_t *len);
+int RedisModule_StringToLongLong(const RedisModuleString *str, long long *ll);
+```
+
+### Key Access
+
+```c
+RedisModuleKey *RedisModule_OpenKey(RedisModuleCtx *ctx, RedisModuleString *keyname, int mode);
+void RedisModule_CloseKey(RedisModuleKey *key);
+int RedisModule_KeyType(RedisModuleKey *key);
+```
+
+Access modes:
+- `REDISMODULE_READ` - Open key for reading
+- `REDISMODULE_WRITE` - Open key for writing
+- `REDISMODULE_OPEN_KEY_NOTOUCH` - Don't update LRU/LFU
+- `REDISMODULE_OPEN_KEY_NOEXPIRE` - Don't delete expired keys
+
+### Reply Functions
+
+```c
+int RedisModule_ReplyWithLongLong(RedisModuleCtx *ctx, long long ll);
+int RedisModule_ReplyWithString(RedisModuleCtx *ctx, RedisModuleString *str);
+int RedisModule_ReplyWithArray(RedisModuleCtx *ctx, long len);
+int RedisModule_ReplyWithError(RedisModuleCtx *ctx, const char *err);
+```
+
+## API Constants
+
+Key return values:
+- `REDISMODULE_OK` (0) - Success
+- `REDISMODULE_ERR` (1) - Error
+
+Key types:
+- `REDISMODULE_KEYTYPE_EMPTY`
+- `REDISMODULE_KEYTYPE_STRING`
+- `REDISMODULE_KEYTYPE_LIST`
+- `REDISMODULE_KEYTYPE_HASH`
+- `REDISMODULE_KEYTYPE_SET`
+- `REDISMODULE_KEYTYPE_ZSET`
+- `REDISMODULE_KEYTYPE_MODULE`
+- `REDISMODULE_KEYTYPE_STREAM`
+
+## Context Flags
+
+The `RedisModule_GetContextFlags()` function returns flags indicating the execution environment:
+
+- `REDISMODULE_CTX_FLAGS_LUA` - Running inside Lua script
+- `REDISMODULE_CTX_FLAGS_MULTI` - Inside transaction
+- `REDISMODULE_CTX_FLAGS_MASTER` - Instance is master
+- `REDISMODULE_CTX_FLAGS_SLAVE` - Instance is replica
+- `REDISMODULE_CTX_FLAGS_READONLY` - Instance is read-only
+- `REDISMODULE_CTX_FLAGS_CLUSTER` - Running in cluster mode
+- `REDISMODULE_CTX_FLAGS_AOF` - AOF is enabled
+- `REDISMODULE_CTX_FLAGS_RDB` - RDB is enabled
+- `REDISMODULE_CTX_FLAGS_LOADING` - Redis is loading data
+
+## Event Subscriptions
+
+Modules can subscribe to server events:
+
+```c
+RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_ReplicationRoleChanged, callback);
+RedisModule_SubscribeToKeyspaceEvents(ctx, REDISMODULE_NOTIFY_ALL, callback);
+```
+
+Available events:
+- Replication role changes
+- Persistence operations (RDB/AOF)
+- Database flush
+- Client connections/disconnections
+- Key modifications
+- Loading progress
+
+## Logging
+
+```c
+RedisModule_Log(ctx, "notice", "Module initialized");
+```
+
+Log levels:
+- `REDISMODULE_LOGLEVEL_DEBUG`
+- `REDISMODULE_LOGLEVEL_VERBOSE`
+- `REDISMODULE_LOGLEVEL_NOTICE`
+- `REDISMODULE_LOGLEVEL_WARNING`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" icon="rocket" href="/modules/getting-started">
+    Learn how to create your first Redis module
+  </Card>
+  <Card title="Custom Data Types" icon="database" href="/modules/data-types">
+    Implement custom data types with persistence
+  </Card>
+  <Card title="Module Commands" icon="terminal" href="/modules/commands">
+    Register and implement module commands
+  </Card>
+  <Card title="Built-in Modules" icon="puzzle-piece" href="/modules/built-in-modules">
+    Explore JSON, Search, TimeSeries, and Bloom modules
+  </Card>
+</CardGroup>
+
+## API Reference
+
+For the complete API reference, see:
+- [Module API documentation](https://redis.io/docs/latest/develop/reference/modules/)
+- Source: `src/redismodule.h` in the Redis repository

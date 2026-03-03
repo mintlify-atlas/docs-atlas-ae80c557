@@ -1,0 +1,738 @@
+---
+title: 'TLS/SSL Configuration'
+description: 'Configure TLS/SSL encryption for secure Redis client-server communication'
+---
+
+## Overview
+
+Redis supports TLS/SSL to encrypt client-server communication, protecting data in transit. This guide covers TLS configuration, certificate management, and best practices.
+
+<Warning>
+TLS is disabled by default. You must explicitly enable and configure it.
+</Warning>
+
+## Building Redis with TLS
+
+Redis can be built with TLS support either as built-in functionality or as a module.
+
+### TLS Built-In
+
+Build Redis with native TLS support:
+
+```bash
+make BUILD_TLS=yes
+```
+
+### TLS as Module
+
+Build TLS as a loadable module:
+
+```bash
+make BUILD_TLS=module
+```
+
+Load the module:
+
+```conf
+loadmodule /path/to/redis-tls.so
+```
+
+<Note>
+Sentinel mode does not support TLS as a module - use built-in TLS for Sentinel.
+</Note>
+
+### Prerequisites
+
+Install OpenSSL development libraries:
+
+**Debian/Ubuntu:**
+```bash
+sudo apt-get install libssl-dev
+```
+
+**RHEL/CentOS:**
+```bash
+sudo yum install openssl-devel
+```
+
+**macOS:**
+```bash
+brew install openssl
+```
+
+## Generating Certificates
+
+For testing, use the provided script to generate self-signed certificates:
+
+```bash
+./utils/gen-test-certs.sh
+```
+
+This creates:
+- `tests/tls/ca.crt` - Certificate Authority (CA) certificate
+- `tests/tls/ca.key` - CA private key
+- `tests/tls/redis.crt` - Server certificate
+- `tests/tls/redis.key` - Server private key
+- `tests/tls/client.crt` - Client certificate (for mutual TLS)
+- `tests/tls/client.key` - Client private key
+
+<Warning>
+Never use test certificates in production! Generate proper certificates from a trusted CA.
+</Warning>
+
+### Production Certificates
+
+For production, obtain certificates from:
+- Let's Encrypt (free)
+- Commercial CA (DigiCert, GlobalSign, etc.)
+- Internal enterprise CA
+
+Ensure you have:
+1. Server certificate (`.crt` or `.pem`)
+2. Server private key (`.key`)
+3. CA certificate or certificate chain
+
+## TLS Configuration
+
+### Basic TLS Configuration
+
+Enable TLS on the default port:
+
+```conf
+# Disable standard TCP port
+port 0
+
+# Enable TLS on port 6379
+tls-port 6379
+
+# Server certificate and key
+tls-cert-file /path/to/redis.crt
+tls-key-file /path/to/redis.key
+
+# CA certificate for client verification
+tls-ca-cert-file /path/to/ca.crt
+```
+
+### Dual Port Configuration (TCP and TLS)
+
+Run both standard and TLS ports simultaneously:
+
+```conf
+# Standard TCP port
+port 6379
+
+# TLS port
+tls-port 6380
+
+# TLS certificates
+tls-cert-file /path/to/redis.crt
+tls-key-file /path/to/redis.key
+tls-ca-cert-file /path/to/ca.crt
+```
+
+This allows gradual migration from unencrypted to encrypted connections.
+
+### Encrypted Private Key
+
+If your private key is encrypted with a passphrase:
+
+```conf
+tls-key-file /path/to/redis.key
+tls-key-file-pass secret_passphrase
+```
+
+<Warning>
+Storing passphrases in configuration files is insecure. Use key management systems or unencrypted keys with proper file permissions.
+</Warning>
+
+### Separate Client/Server Certificates
+
+Use different certificates for server and client roles:
+
+```conf
+# Server certificates (incoming connections)
+tls-cert-file /path/to/server.crt
+tls-key-file /path/to/server.key
+
+# Client certificates (outgoing connections)
+tls-client-cert-file /path/to/client.crt
+tls-client-key-file /path/to/client.key
+
+# CA certificate
+tls-ca-cert-file /path/to/ca.crt
+```
+
+Useful when:
+- Certificates have role-specific attributes
+- Different CAs for client and server
+- Compliance requirements
+
+### CA Certificate Directory
+
+Use a directory of CA certificates:
+
+```conf
+# CA certificate file
+tls-ca-cert-file /path/to/ca.crt
+
+# Or CA certificate directory
+tls-ca-cert-dir /etc/ssl/certs
+```
+
+## Client Authentication
+
+### Client Certificate Requirements
+
+Control client certificate validation:
+
+```conf
+# Require valid client certificates (default for TLS)
+tls-auth-clients yes
+
+# Client certificates optional
+tls-auth-clients optional
+
+# No client certificates required
+tls-auth-clients no
+```
+
+**Options:**
+- `yes` - Require and validate client certificates
+- `optional` - Accept but validate if provided
+- `no` - Don't require or accept client certificates
+
+<Note>
+When `tls-auth-clients` is `yes` (default), mutual TLS (mTLS) is enforced.
+</Note>
+
+### Automatic User Authentication
+
+Authenticate users based on certificate fields:
+
+```conf
+# Match certificate CN to Redis username
+tls-auth-clients-user CN
+
+# Disable automatic authentication
+tls-auth-clients-user off
+```
+
+When enabled:
+- Certificate's Common Name (CN) field is extracted
+- Redis attempts to find a user with matching name
+- If found, client is automatically authenticated
+- If not found, client connects as unauthenticated default user
+
+**Example:**
+
+Certificate with `CN=myapp` authenticates as user `myapp`:
+
+```bash
+# Create user matching certificate CN
+ACL SETUSER myapp on nopass ~* +@all
+```
+
+## TLS Protocol and Cipher Configuration
+
+### Protocol Versions
+
+Specify allowed TLS versions:
+
+```conf
+# Enable only TLSv1.2 and TLSv1.3 (recommended)
+tls-protocols "TLSv1.2 TLSv1.3"
+
+# TLSv1.3 only (most secure)
+tls-protocols "TLSv1.3"
+```
+
+<Warning>
+TLSv1.0 and TLSv1.1 are deprecated and insecure. Use TLSv1.2 or TLSv1.3.
+</Warning>
+
+### Cipher Suites
+
+Configure allowed ciphers:
+
+**TLSv1.2 Ciphers:**
+```conf
+# Default secure ciphers
+tls-ciphers DEFAULT:!MEDIUM
+
+# Or specify explicitly
+tls-ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384
+```
+
+**TLSv1.3 Ciphersuites:**
+```conf
+tls-ciphersuites TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384
+```
+
+### Cipher Preference
+
+Choose server or client cipher preference:
+
+```conf
+# Use server's cipher preference (recommended)
+tls-prefer-server-ciphers yes
+
+# Use client's cipher preference
+tls-prefer-server-ciphers no
+```
+
+### Diffie-Hellman Parameters
+
+For older OpenSSL versions (before 3.0):
+
+```conf
+tls-dh-params-file /path/to/redis.dh
+```
+
+Generate DH parameters:
+
+```bash
+openssl dhparam -out redis.dh 2048
+```
+
+<Note>
+OpenSSL 3.0+ doesn't require DH parameters file.
+</Note>
+
+## TLS Session Management
+
+### Session Caching
+
+Enable TLS session caching for performance:
+
+```conf
+# Enable session caching (default)
+tls-session-caching yes
+
+# Disable session caching
+tls-session-caching no
+```
+
+### Cache Size
+
+Set maximum cached sessions:
+
+```conf
+# Default: 20480 sessions
+tls-session-cache-size 20480
+
+# Unlimited cache
+tls-session-cache-size 0
+```
+
+### Cache Timeout
+
+Set session cache timeout:
+
+```conf
+# Default: 300 seconds (5 minutes)
+tls-session-cache-timeout 300
+
+# Longer timeout for better performance
+tls-session-cache-timeout 3600
+```
+
+## TLS for Replication
+
+Enable TLS for master-replica connections:
+
+```conf
+# On replica server
+tls-replication yes
+
+# Standard replication config
+replicaof master-host 6380
+```
+
+The replica will connect to master using TLS.
+
+## TLS for Cluster
+
+Enable TLS for Redis Cluster bus:
+
+```conf
+# Enable cluster mode
+cluster-enabled yes
+
+# Enable TLS for cluster bus
+tls-cluster yes
+
+# TLS configuration
+tls-port 6379
+tls-cert-file /path/to/redis.crt
+tls-key-file /path/to/redis.key
+tls-ca-cert-file /path/to/ca.crt
+```
+
+## Starting Redis with TLS
+
+### Basic TLS Server
+
+```bash
+./src/redis-server --tls-port 6379 --port 0 \
+    --tls-cert-file ./tests/tls/redis.crt \
+    --tls-key-file ./tests/tls/redis.key \
+    --tls-ca-cert-file ./tests/tls/ca.crt
+```
+
+### With Configuration File
+
+```bash
+redis-server /etc/redis/redis-tls.conf
+```
+
+## Connecting with redis-cli
+
+### Basic TLS Connection
+
+```bash
+redis-cli --tls \
+    --cert ./tests/tls/redis.crt \
+    --key ./tests/tls/redis.key \
+    --cacert ./tests/tls/ca.crt
+```
+
+### With Client Certificate
+
+```bash
+redis-cli --tls \
+    --cert ./tests/tls/client.crt \
+    --key ./tests/tls/client.key \
+    --cacert ./tests/tls/ca.crt
+```
+
+### Skip Certificate Verification (Testing Only)
+
+```bash
+redis-cli --tls --insecure
+```
+
+<Warning>
+**Never use** `--insecure` in production! It disables certificate validation and is vulnerable to man-in-the-middle attacks.
+</Warning>
+
+### Connect to Specific Port
+
+```bash
+redis-cli --tls -h hostname -p 6380 \
+    --cacert /path/to/ca.crt
+```
+
+## Client Library Configuration
+
+Examples for common clients:
+
+### Python (redis-py)
+
+```python
+import redis
+
+r = redis.Redis(
+    host='localhost',
+    port=6379,
+    ssl=True,
+    ssl_certfile='./tests/tls/client.crt',
+    ssl_keyfile='./tests/tls/client.key',
+    ssl_ca_certs='./tests/tls/ca.crt',
+    ssl_cert_reqs='required'
+)
+```
+
+### Node.js (node-redis)
+
+```javascript
+const redis = require('redis');
+const fs = require('fs');
+
+const client = redis.createClient({
+    socket: {
+        host: 'localhost',
+        port: 6379,
+        tls: true,
+        cert: fs.readFileSync('./tests/tls/client.crt'),
+        key: fs.readFileSync('./tests/tls/client.key'),
+        ca: [fs.readFileSync('./tests/tls/ca.crt')]
+    }
+});
+```
+
+### Go (go-redis)
+
+```go
+import (
+    "crypto/tls"
+    "github.com/go-redis/redis/v8"
+)
+
+tlsConfig := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    RootCAs:      caCertPool,
+}
+
+client := redis.NewClient(&redis.Options{
+    Addr:      "localhost:6379",
+    TLSConfig: tlsConfig,
+})
+```
+
+## Testing TLS Configuration
+
+### Verify TLS Handshake
+
+```bash
+# Test TLS connection with OpenSSL
+openssl s_client -connect localhost:6379 \
+    -cert ./tests/tls/client.crt \
+    -key ./tests/tls/client.key \
+    -CAfile ./tests/tls/ca.crt
+```
+
+Successful output shows certificate chain and "Verify return code: 0 (ok)".
+
+### Test Certificate Validation
+
+```bash
+# Should succeed
+redis-cli --tls --cacert ./tests/tls/ca.crt PING
+
+# Should fail (no CA cert)
+redis-cli --tls PING
+```
+
+### Run Test Suite
+
+```bash
+# Generate test certificates
+./utils/gen-test-certs.sh
+
+# Run tests with TLS built-in
+./runtest --tls
+
+# Run tests with TLS module
+./runtest --tls-module
+
+# Run cluster tests
+./runtest-cluster --tls
+```
+
+## TLS Configuration Examples
+
+### Example 1: Basic Production Setup
+
+```conf
+# Disable unencrypted port
+port 0
+
+# Enable TLS
+tls-port 6379
+
+# Certificates
+tls-cert-file /etc/redis/certs/server.crt
+tls-key-file /etc/redis/certs/server.key
+tls-ca-cert-file /etc/redis/certs/ca.crt
+
+# Require client certificates
+tls-auth-clients yes
+
+# Modern TLS only
+tls-protocols "TLSv1.2 TLSv1.3"
+
+# Server cipher preference
+tls-prefer-server-ciphers yes
+
+# Session caching
+tls-session-caching yes
+tls-session-cache-size 20480
+tls-session-cache-timeout 300
+```
+
+### Example 2: Migration Setup (Dual Port)
+
+```conf
+# Keep existing unencrypted port
+port 6379
+
+# Add TLS on different port
+tls-port 6380
+
+# Certificates
+tls-cert-file /etc/redis/certs/server.crt
+tls-key-file /etc/redis/certs/server.key
+tls-ca-cert-file /etc/redis/certs/ca.crt
+
+# Optional client certs during migration
+tls-auth-clients optional
+```
+
+### Example 3: Cluster with TLS
+
+```conf
+# Cluster mode
+cluster-enabled yes
+cluster-config-file nodes.conf
+
+# TLS for client connections
+port 0
+tls-port 6379
+
+# TLS for cluster bus
+tls-cluster yes
+
+# Certificates
+tls-cert-file /etc/redis/certs/server.crt
+tls-key-file /etc/redis/certs/server.key
+tls-ca-cert-file /etc/redis/certs/ca.crt
+
+# Client authentication
+tls-auth-clients yes
+```
+
+## Troubleshooting
+
+### Connection Refused
+
+**Problem**: Cannot connect with TLS
+
+**Check:**
+```bash
+# Verify Redis is listening on TLS port
+netstat -tlnp | grep 6379
+
+# Check Redis logs
+tail -f /var/log/redis/redis-server.log
+
+# Test with OpenSSL
+openssl s_client -connect localhost:6379
+```
+
+### Certificate Verification Failed
+
+**Problem**: Certificate validation errors
+
+**Solutions:**
+```bash
+# Verify certificate chain
+openssl verify -CAfile ca.crt server.crt
+
+# Check certificate dates
+openssl x509 -in server.crt -noout -dates
+
+# Verify certificate CN matches hostname
+openssl x509 -in server.crt -noout -subject
+```
+
+### Handshake Failure
+
+**Problem**: TLS handshake fails
+
+**Check:**
+```bash
+# View detailed handshake
+openssl s_client -connect localhost:6379 -debug
+
+# Check supported protocols
+redis-cli CONFIG GET tls-protocols
+
+# Check cipher suites
+redis-cli CONFIG GET tls-ciphers
+```
+
+### Performance Issues
+
+**Problem**: Slow connections with TLS
+
+**Solutions:**
+```conf
+# Enable session caching
+tls-session-caching yes
+
+# Increase cache size
+tls-session-cache-size 50000
+
+# Use hardware acceleration if available
+# (OpenSSL AES-NI on Intel CPUs)
+```
+
+## Security Best Practices
+
+<Steps>
+
+### Use Strong Certificates
+
+- Use at least 2048-bit RSA or 256-bit ECC
+- Get certificates from trusted CA
+- Set proper Common Name (CN) and Subject Alternative Names (SAN)
+- Use certificates with reasonable expiration (1 year)
+
+### Enforce Modern TLS
+
+```conf
+# Disable old protocols
+tls-protocols "TLSv1.2 TLSv1.3"
+
+# Use strong ciphers only
+tls-ciphers HIGH:!aNULL:!MD5:!RC4
+```
+
+### Require Client Certificates
+
+```conf
+# Enforce mutual TLS
+tls-auth-clients yes
+```
+
+### Rotate Certificates Regularly
+
+Set up certificate rotation:
+- Monitor certificate expiration
+- Automate renewal (Let's Encrypt)
+- Plan rotation procedures
+
+### Secure Private Keys
+
+```bash
+# Set restrictive permissions
+chmod 600 /etc/redis/certs/server.key
+chown redis:redis /etc/redis/certs/server.key
+```
+
+### Monitor TLS Connections
+
+```bash
+# Check TLS info
+redis-cli INFO server | grep tls
+
+# Monitor certificate expiration
+openssl x509 -in server.crt -noout -checkend 2592000
+```
+
+</Steps>
+
+## TLS Checklist
+
+- [ ] OpenSSL development libraries installed
+- [ ] Redis built with TLS support
+- [ ] Valid certificates from trusted CA
+- [ ] Private keys secured with proper permissions
+- [ ] TLS port configured
+- [ ] Client authentication configured
+- [ ] Modern TLS protocols only (1.2+)
+- [ ] Strong cipher suites configured
+- [ ] Session caching enabled
+- [ ] Replication TLS enabled (if using replicas)
+- [ ] Cluster TLS enabled (if using cluster)
+- [ ] Certificate expiration monitoring
+- [ ] TLS tested with redis-cli
+- [ ] Client libraries configured
+- [ ] Firewall rules updated
+
+## See Also
+
+- [Security Configuration](/operations/security)
+- [Configuration](/operations/configuration)
+- [Redis TLS Documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/)
+- [OpenSSL Documentation](https://www.openssl.org/docs/)

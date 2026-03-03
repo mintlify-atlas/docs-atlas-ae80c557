@@ -1,80 +1,303 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get up and running with Redis in 5 minutes
 ---
 
-## Get started in three steps
+This quickstart guide will help you start a Redis server, connect to it, and run your first commands.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+This guide assumes you have Redis installed. If you haven't installed Redis yet, see the [installation guide](/installation).
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Note>
+The fastest way to get started is using Docker:
+```bash
+docker run -d -p 6379:6379 redis:latest
+```
+</Note>
+
+## Start the Redis server
+
+<Steps>
+  <Step title="Navigate to the Redis directory">
+    If you built Redis from source, navigate to your Redis installation directory:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    cd /usr/src/redis-<version>
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    Replace `<version>` with your Redis version (e.g., `8.0.0`).
+  </Step>
+  
+  <Step title="Start the server">
+    Launch Redis server with the default configuration:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash
+    ./src/redis-server
+    ```
+    
+    For a Redis instance with all data structures enabled:
+    
+    ```bash
+    ./src/redis-server redis-full.conf
+    ```
+    
+    You should see output indicating Redis is running:
+    
+    ```text
+    [####] Server initialized
+    [####] Ready to accept connections
+    ```
+  </Step>
+  
+  <Step title="Verify the server is running">
+    The server will start on port `6379` by default. Keep this terminal window open.
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Connect with redis-cli
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+[`redis-cli`](https://redis.io/docs/latest/develop/tools/cli/) is Redis' command line interface, available as part of all Redis installations.
 
-### Step 3: Go live
+<Steps>
+  <Step title="Open a new terminal">
+    Keep your Redis server running in the original terminal and open a new terminal window.
+  </Step>
+  
+  <Step title="Launch redis-cli">
+    Navigate to the Redis source directory and start the CLI:
+    
+    ```bash
+    cd src
+    ./redis-cli
+    ```
+    
+    You'll see the Redis prompt:
+    
+    ```text
+    redis>
+    ```
+  </Step>
+  
+  <Step title="Test the connection">
+    Try the `PING` command to verify connectivity:
+    
+    ```bash
+    redis> ping
+    ```
+    
+    Expected response:
+    
+    ```text
+    PONG
+    ```
+  </Step>
+</Steps>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+## Run basic commands
+
+Now that you're connected, let's try some fundamental Redis operations.
+
+### Store and retrieve data
+
+Use `SET` to store a value and `GET` to retrieve it:
+
+<CodeGroup>
+```bash SET command
+redis> set foo bar
+OK
+```
+
+```bash GET command
+redis> get foo
+"bar"
+```
+</CodeGroup>
+
+### Work with counters
+
+Redis excels at atomic operations like incrementing counters with `INCR`:
+
+```bash
+redis> incr mycounter
+(integer) 1
+redis> incr mycounter
+(integer) 2
+```
+
+### Store multiple values
+
+Set multiple key-value pairs at once with `MSET`:
+
+```bash
+redis> mset key1 "Hello" key2 "World"
+OK
+redis> mget key1 key2
+1) "Hello"
+2) "World"
+```
+
+### Work with expiration
+
+Set a key with an expiration time using `SETEX`:
+
+```bash
+redis> setex session:user:123 3600 "user-data"
+OK
+redis> ttl session:user:123
+(integer) 3600
+```
+
+This sets a key that expires in 3600 seconds (1 hour).
+
+## Explore data structures
+
+<Tip>
+Redis supports rich data structures beyond simple key-value pairs.
+</Tip>
+
+### Lists
+
+Use lists for queues and stacks:
+
+```bash
+redis> lpush mylist "world"
+(integer) 1
+redis> lpush mylist "hello"
+(integer) 2
+redis> lrange mylist 0 -1
+1) "hello"
+2) "world"
+```
+
+### Sets
+
+Track unique items with sets:
+
+```bash
+redis> sadd myset "apple"
+(integer) 1
+redis> sadd myset "banana"
+(integer) 1
+redis> sadd myset "apple"
+(integer) 0
+redis> smembers myset
+1) "apple"
+2) "banana"
+```
+
+### Hashes
+
+Store objects as hashes:
+
+```bash
+redis> hset user:1000 name "John Doe" email "john@example.com" age 30
+(integer) 3
+redis> hget user:1000 name
+"John Doe"
+redis> hgetall user:1000
+1) "name"
+2) "John Doe"
+3) "email"
+4) "john@example.com"
+5) "age"
+6) "30"
+```
+
+### Sorted Sets
+
+Build leaderboards with sorted sets:
+
+```bash
+redis> zadd leaderboard 100 "player1"
+(integer) 1
+redis> zadd leaderboard 200 "player2"
+(integer) 1
+redis> zadd leaderboard 150 "player3"
+(integer) 1
+redis> zrevrange leaderboard 0 -1 withscores
+1) "player2"
+2) "200"
+3) "player3"
+4) "150"
+5) "player1"
+6) "100"
+```
+
+## Configuration options
+
+Redis can be configured via the command line or using a configuration file.
+
+<CodeGroup>
+```bash Using config file
+./redis-server /path/to/redis.conf
+```
+
+```bash Specify port
+./redis-server --port 6380
+```
+
+```bash Custom settings
+./redis-server --port 6380 --maxmemory 100mb
+```
+</CodeGroup>
+
+<Note>
+The default Redis configuration binds to `127.0.0.1 -::1` (localhost only) for security. To accept connections from other hosts, you'll need to modify the `bind` directive in `redis.conf`.
+</Note>
+
+## Test your installation
+
+After building Redis from source, it's recommended to run the test suite:
+
+```bash
+make test
+```
+
+If you built with TLS support, test with TLS enabled:
+
+```bash
+./utils/gen-test-certs.sh
+./runtest --tls
+```
+
+<Warning>
+You'll need `tcl-tls` installed to run TLS tests.
+</Warning>
+
+## Alternative tools
+
+### Redis Insight
+
+For a more visual experience, use [Redis Insight](https://redis.io/docs/latest/develop/tools/insight/)—a tool that lets you explore data, design, and optimize your applications. Redis Insight integrates [Redis Copilot](https://redis.io/chat), a natural language AI assistant.
+
+### Client libraries
+
+Connect your application to Redis using client libraries in your preferred language:
+
+- [Python (redis-py)](https://redis.io/docs/latest/develop/clients/redis-py/)
+- [JavaScript (node-redis)](https://redis.io/docs/latest/develop/clients/nodejs/)
+- [Java (Jedis)](https://redis.io/docs/latest/develop/clients/jedis/)
+- [Go (go-redis)](https://redis.io/docs/latest/develop/clients/go/)
+- [C#/.NET (NRedisStack)](https://redis.io/docs/latest/develop/clients/dotnet/)
+- [Full list of client libraries](https://redis.io/docs/latest/develop/clients/)
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Introduction to Redis data types" icon="database" href="https://redis.io/docs/latest/develop/data-types/">
+    Learn about all available data types
+  </Card>
+  
+  <Card title="Full command reference" icon="terminal" href="https://redis.io/commands/">
+    Explore the complete Redis command set
+  </Card>
+  
+  <Card title="Redis for AI" icon="brain" href="https://redis.io/docs/latest/develop/ai/">
+    Use Redis for AI and ML applications
+  </Card>
+  
+  <Card title="Starter projects" icon="code" href="https://github.com/redis-developer">
+    Browse language-specific starter projects
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

@@ -1,0 +1,258 @@
+---
+title: Lists
+description: Ordered collections of strings perfect for queues, activity feeds, and stacks
+---
+
+Redis lists are ordered collections of strings, sorted by insertion order. They're implemented as linked lists of compact arrays (quicklists), providing fast insertion and deletion at both ends.
+
+## Use Cases
+
+- **Message queues**: FIFO or LIFO queues with blocking operations
+- **Activity feeds**: Chronological user actions or social media feeds
+- **Job queues**: Background task processing with workers
+- **Recent items**: Latest N posts, comments, or notifications
+- **Undo/redo stacks**: Command history in applications
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Push elements to list
+redis> LPUSH mylist "world"
+(integer) 1
+redis> LPUSH mylist "hello"
+(integer) 2
+redis> RPUSH mylist "!"
+(integer) 3
+
+# Get range
+redis> LRANGE mylist 0 -1
+1) "hello"
+2) "world"
+3) "!"
+
+# Get list length
+redis> LLEN mylist
+(integer) 3
+```
+
+### Push and Pop
+
+```bash
+# Push to left (head)
+redis> LPUSH queue "task1" "task2" "task3"
+(integer) 3
+
+# Pop from right (tail) - FIFO queue
+redis> RPOP queue
+"task1"
+
+# Pop from left - LIFO stack
+redis> LPOP queue
+"task3"
+
+# Pop multiple elements
+redis> LPUSH queue "a" "b" "c"
+(integer) 3
+redis> LPOP queue 2
+1) "c"
+2) "b"
+```
+
+### Blocking Operations
+
+```bash
+# Block until element available (5 second timeout)
+redis> BLPOP queue 5
+1) "queue"
+2) "task2"
+
+# Block on multiple lists
+redis> BLPOP queue1 queue2 queue3 10
+1) "queue2"
+2) "element"
+
+# Blocking right pop
+redis> BRPOP queue 5
+1) "queue"
+2) "last_element"
+```
+
+### List Manipulation
+
+```bash
+# Get element by index
+redis> LINDEX mylist 0
+"hello"
+
+# Set element by index
+redis> LSET mylist 1 "Redis"
+OK
+
+# Insert before or after element
+redis> LINSERT mylist BEFORE "Redis" "awesome"
+(integer) 4
+
+# Remove elements
+redis> LREM mylist 1 "!"
+(integer) 1
+
+# Trim to range
+redis> LTRIM mylist 0 9
+OK
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| LPUSH/RPUSH | O(1) | Add to head/tail |
+| LPOP/RPOP | O(1) | Remove from head/tail |
+| LLEN | O(1) | Get list length |
+| LINDEX | O(N) | Access by index |
+| LSET | O(N) | Set by index |
+| LRANGE | O(S+N) | S=offset, N=elements |
+| LINSERT | O(N) | Find and insert |
+| LREM | O(N+M) | Remove M occurrences |
+| LTRIM | O(N) | N=removed elements |
+
+<Note>
+LPUSH/RPUSH and LPOP/RPOP are O(1) because lists are optimized for head/tail operations.
+</Note>
+
+## Patterns and Examples
+
+### Message Queue (FIFO)
+
+```bash
+# Producer: Add tasks to queue
+redis> LPUSH tasks "send_email:user123"
+(integer) 1
+redis> LPUSH tasks "process_order:456"
+(integer) 2
+
+# Consumer: Process tasks in order
+redis> BRPOP tasks 0
+1) "tasks"
+2) "send_email:user123"
+
+redis> BRPOP tasks 0
+1) "tasks"
+2) "process_order:456"
+```
+
+### Activity Feed
+
+```bash
+# Add new activities
+redis> LPUSH feed:user:123 "liked post 456"
+(integer) 1
+redis> LPUSH feed:user:123 "commented on post 789"
+(integer) 2
+
+# Get recent 10 activities
+redis> LRANGE feed:user:123 0 9
+1) "commented on post 789"
+2) "liked post 456"
+
+# Keep only recent 100 activities
+redis> LTRIM feed:user:123 0 99
+OK
+```
+
+### Reliable Queue Pattern
+
+Use RPOPLPUSH or BLMOVE to create a reliable queue where tasks aren't lost:
+
+```bash
+# Move task from main queue to processing queue atomically
+redis> RPOPLPUSH tasks processing
+"task1"
+
+# After processing, remove from processing queue
+redis> LREM processing 1 "task1"
+(integer) 1
+
+# If worker crashes, tasks remain in processing queue for recovery
+```
+
+### Leaky Bucket Pattern
+
+```bash
+# Add request
+redis> LPUSH requests:user:123 "request1"
+(integer) 1
+
+# Trim to max burst size (e.g., 100)
+redis> LTRIM requests:user:123 0 99
+OK
+
+# Check if under limit
+redis> LLEN requests:user:123
+(integer) 45
+```
+
+## Internal Encoding
+
+Redis lists use **quicklist** encoding:
+
+- Linked list of listpacks (compressed arrays)
+- Configurable listpack size for memory vs performance tradeoff
+- Optimized for both small and large lists
+
+```bash
+redis> LPUSH mylist "a" "b" "c"
+(integer) 3
+redis> OBJECT ENCODING mylist
+"quicklist"
+```
+
+Configuration options:
+
+```conf
+# Maximum listpack size (-1 to -5 or positive bytes)
+list-max-listpack-size -2
+
+# Compress depth (0=off, 1=compress all except head/tail)
+list-compress-depth 0
+```
+
+## Best Practices
+
+1. **Use blocking operations** for efficient queue consumers
+2. **LTRIM periodically** to cap list size for feeds
+3. **Use RPOPLPUSH** for reliable queue processing
+4. **Avoid LINDEX/LSET** on large lists (O(N) operation)
+5. **Consider Streams** for advanced queue features (consumer groups, acknowledgments)
+
+<Warning>
+Avoid using lists as arrays with random access. If you need index-based access, consider using hashes with numeric field names.
+</Warning>
+
+<Tip>
+For job queues with priorities, use multiple lists or sorted sets instead of a single list.
+</Tip>
+
+## Lists vs Streams
+
+| Feature | Lists | Streams |
+|---------|-------|--------|
+| Ordering | Insertion order | Time-ordered |
+| Consumer groups | No | Yes |
+| Message ID | No | Yes (timestamp-sequence) |
+| Acknowledgments | No | Yes |
+| Multiple consumers | Manual | Built-in |
+| Message persistence | Simple | With ID tracking |
+| Best for | Simple queues | Complex messaging |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="List Commands" href="/commands/lists">
+    Complete command reference
+  </Card>
+  <Card title="Streams" href="/data-types/streams">
+    For advanced messaging
+  </Card>
+</CardGroup>

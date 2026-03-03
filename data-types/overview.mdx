@@ -1,0 +1,124 @@
+---
+title: Data types overview
+description: Comprehensive overview of all Redis data types and their use cases
+---
+
+Redis supports a rich set of data types beyond simple key-value pairs. Each data type is optimized for specific use cases and operations.
+
+## Core Data Types
+
+Redis provides several fundamental data types, each with its own set of commands and characteristics:
+
+<CardGroup cols={2}>
+  <Card title="Strings" icon="font" href="/data-types/strings">
+    Binary-safe strings up to 512MB. Used for caching, counters, and distributed locks.
+  </Card>
+  <Card title="Lists" icon="list" href="/data-types/lists">
+    Ordered collections of strings. Perfect for queues, activity feeds, and stacks.
+  </Card>
+  <Card title="Sets" icon="circle-nodes" href="/data-types/sets">
+    Unordered collections of unique strings. Ideal for tags, unique visitors, and relationships.
+  </Card>
+  <Card title="Sorted Sets" icon="ranking-star" href="/data-types/sorted-sets">
+    Sets ordered by score. Essential for leaderboards, priority queues, and time series.
+  </Card>
+  <Card title="Hashes" icon="hashtag" href="/data-types/hashes">
+    Field-value maps. Great for objects, user profiles, and counters.
+  </Card>
+  <Card title="Streams" icon="water" href="/data-types/streams">
+    Append-only log structure with consumer groups. Built for event sourcing and messaging.
+  </Card>
+</CardGroup>
+
+## Extended Data Types
+
+<CardGroup cols={2}>
+  <Card title="JSON" icon="brackets-curly" href="/data-types/json">
+    Native JSON documents with JSONPath queries. Requires BUILD_WITH_MODULES=yes.
+  </Card>
+  <Card title="Bitmaps" icon="grid" href="/data-types/bitmaps">
+    Bit-level operations on strings. Efficient for analytics and permissions.
+  </Card>
+  <Card title="HyperLogLog" icon="calculator" href="/data-types/hyperloglogs">
+    Probabilistic cardinality estimation. Count unique items with minimal memory.
+  </Card>
+  <Card title="Geospatial" icon="location-dot" href="/data-types/geospatial">
+    Longitude/latitude coordinates with radius queries. Built on sorted sets.
+  </Card>
+</CardGroup>
+
+## Choosing the Right Data Type
+
+| Use Case | Recommended Type | Why |
+|----------|------------------|-----|
+| Caching | Strings | Simple get/set with TTL |
+| Session storage | Hashes or JSON | Structured data with field updates |
+| Counters | Strings | Atomic INCR/DECR operations |
+| Rate limiting | Sorted Sets | Time-based windowing |
+| Leaderboards | Sorted Sets | Score-based ranking |
+| Queues | Lists or Streams | FIFO/LIFO with blocking |
+| Real-time feeds | Lists or Streams | Chronological ordering |
+| Unique visitors | Sets or HyperLogLog | Uniqueness tracking |
+| Tagging | Sets | Set operations (union, intersection) |
+| Event sourcing | Streams | Append-only with consumer groups |
+| User profiles | Hashes | Object representation |
+| Location search | Geospatial | Radius and proximity queries |
+
+## Data Type Internals
+
+Redis uses different internal encodings based on data size and type:
+
+### Memory-Efficient Encodings
+
+- **LISTPACK**: Compact serialization for small collections (lists, hashes, sorted sets)
+- **INTSET**: Space-efficient integer sets when all members are integers
+- **ZIPLIST**: Legacy compact encoding (deprecated in favor of listpack)
+
+### Standard Encodings
+
+- **HASHTABLE**: Standard hash table for larger datasets
+- **SKIPLIST**: Probabilistic balanced tree for sorted sets
+- **QUICKLIST**: List of listpacks for efficient list operations
+- **RADIX TREE**: Efficient tree structure for streams
+
+<Note>
+Redis automatically selects the most efficient encoding based on the data size and configured thresholds. You can view the encoding with the `OBJECT ENCODING key` command.
+</Note>
+
+## Performance Characteristics
+
+Each data type has different performance characteristics:
+
+| Data Type | Read | Write | Range Query | Memory |
+|-----------|------|-------|-------------|--------|
+| Strings | O(1) | O(1) | N/A | Highest |
+| Lists | O(1) ends, O(N) middle | O(1) ends | O(N) | Medium |
+| Sets | O(1) | O(1) | N/A | Medium |
+| Sorted Sets | O(log N) | O(log N) | O(log N + M) | High |
+| Hashes | O(1) field | O(1) field | O(N) | Medium |
+| Streams | O(1) append | O(1) | O(N) | Medium-High |
+
+<Tip>
+For best performance, choose the simplest data type that meets your needs. More complex types like sorted sets have higher overhead.
+</Tip>
+
+## Module Data Types
+
+These require compiling Redis with `BUILD_WITH_MODULES=yes`:
+
+- **JSON**: Full-featured JSON document storage
+- **Time Series**: Optimized time-series data with automatic downsampling
+- **Bloom Filter**: Probabilistic set membership
+- **Cuckoo Filter**: Bloom filter with deletion support
+- **Vector Sets**: Embedding vectors for similarity search
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Strings" href="/data-types/strings">
+    Learn about the most versatile data type
+  </Card>
+  <Card title="Commands Reference" href="/commands/overview">
+    Explore all available commands
+  </Card>
+</CardGroup>

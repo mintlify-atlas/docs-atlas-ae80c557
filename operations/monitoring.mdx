@@ -1,0 +1,579 @@
+---
+title: 'Monitoring'
+description: 'Monitor Redis using INFO, MONITOR, and SLOWLOG commands'
+---
+
+## Overview
+
+Redis provides powerful built-in monitoring capabilities to track server health, performance metrics, and command execution. This guide covers the INFO, MONITOR, and SLOWLOG commands.
+
+## INFO Command
+
+The INFO command returns comprehensive information about the Redis server.
+
+### Basic Usage
+
+```bash
+# Get all information
+INFO
+
+# Get specific section
+INFO server
+INFO stats
+INFO memory
+
+# Get multiple sections
+INFO server stats
+```
+
+### INFO Sections
+
+#### Server Section
+
+Basic server information:
+
+```bash
+INFO server
+```
+
+Key metrics:
+- `redis_version` - Redis server version
+- `redis_mode` - standalone, cluster, or sentinel
+- `os` - Operating system
+- `arch_bits` - Architecture (32 or 64 bit)
+- `process_id` - Server process PID
+- `tcp_port` - TCP port
+- `uptime_in_seconds` - Server uptime
+- `uptime_in_days` - Server uptime in days
+- `config_file` - Configuration file path
+
+#### Clients Section
+
+Client connection information:
+
+```bash
+INFO clients
+```
+
+Key metrics:
+- `connected_clients` - Number of connected clients
+- `cluster_connections` - Number of cluster connections
+- `maxclients` - Maximum client limit
+- `client_recent_max_input_buffer` - Biggest input buffer
+- `client_recent_max_output_buffer` - Biggest output buffer
+- `blocked_clients` - Clients blocked on BLPOP, BRPOP, etc.
+- `tracking_clients` - Clients with tracking enabled
+- `clients_in_timeout_table` - Clients in timeout table
+
+#### Memory Section
+
+Memory usage statistics:
+
+```bash
+INFO memory
+```
+
+Key metrics:
+- `used_memory` - Total memory allocated by Redis (bytes)
+- `used_memory_human` - Human readable format
+- `used_memory_rss` - Resident set size from OS perspective
+- `used_memory_peak` - Peak memory consumed
+- `used_memory_peak_human` - Peak memory (human readable)
+- `used_memory_overhead` - Server overhead memory
+- `used_memory_dataset` - Dataset memory (excluding overhead)
+- `used_memory_dataset_perc` - Dataset memory percentage
+- `total_system_memory` - Total system memory
+- `total_system_memory_human` - Total system memory (human readable)
+- `maxmemory` - Configured maxmemory limit
+- `maxmemory_human` - Maxmemory (human readable)
+- `maxmemory_policy` - Eviction policy
+- `mem_fragmentation_ratio` - Fragmentation ratio (RSS/allocated)
+- `mem_allocator` - Memory allocator (jemalloc, libc, tcmalloc)
+
+**Understanding Memory Metrics:**
+
+- **used_memory**: Total memory Redis reports as used
+- **used_memory_rss**: Actual physical memory used (from OS)
+- **Fragmentation ratio**: `used_memory_rss / used_memory`
+  - < 1.0: Redis is swapping (bad!)
+  - ~1.0: Ideal
+  - \> 1.5: High fragmentation, consider restart
+
+#### Stats Section
+
+General statistics:
+
+```bash
+INFO stats
+```
+
+Key metrics:
+- `total_connections_received` - Total accepted connections
+- `total_commands_processed` - Total commands processed
+- `instantaneous_ops_per_sec` - Operations per second
+- `total_net_input_bytes` - Total bytes received
+- `total_net_output_bytes` - Total bytes sent
+- `instantaneous_input_kbps` - Input kilobytes per second
+- `instantaneous_output_kbps` - Output kilobytes per second
+- `rejected_connections` - Rejected connections (maxclients)
+- `expired_keys` - Total keys expired
+- `evicted_keys` - Total keys evicted
+- `keyspace_hits` - Successful key lookups
+- `keyspace_misses` - Failed key lookups
+- `pubsub_channels` - Active pub/sub channels
+- `pubsub_patterns` - Active pub/sub patterns
+
+**Cache Hit Ratio:**
+
+```
+hit_rate = keyspace_hits / (keyspace_hits + keyspace_misses)
+```
+
+A low hit rate may indicate:
+- Keys expiring too quickly
+- Insufficient memory causing evictions
+- Application requesting non-existent keys
+
+#### Replication Section
+
+Replication information:
+
+```bash
+INFO replication
+```
+
+Key metrics:
+- `role` - master or slave
+- `connected_slaves` - Number of connected replicas
+- `master_replid` - Replication ID
+- `master_repl_offset` - Master replication offset
+- `repl_backlog_active` - Backlog status
+- `repl_backlog_size` - Backlog buffer size
+
+For replicas:
+- `master_host` - Master host
+- `master_port` - Master port
+- `master_link_status` - up or down
+- `master_last_io_seconds_ago` - Seconds since last master IO
+- `master_sync_in_progress` - Sync status
+
+#### CPU Section
+
+CPU consumption:
+
+```bash
+INFO cpu
+```
+
+Key metrics:
+- `used_cpu_sys` - System CPU consumed by Redis
+- `used_cpu_user` - User CPU consumed by Redis  
+- `used_cpu_sys_children` - System CPU by background processes
+- `used_cpu_user_children` - User CPU by background processes
+
+#### Keyspace Section
+
+Database key statistics:
+
+```bash
+INFO keyspace
+```
+
+Example output:
+```
+db0:keys=1234,expires=567,avg_ttl=789012
+db1:keys=5678,expires=890,avg_ttl=456789
+```
+
+Metrics per database:
+- `keys` - Total keys
+- `expires` - Keys with expiration set
+- `avg_ttl` - Average TTL in milliseconds
+
+#### Persistence Section
+
+RDB and AOF status:
+
+```bash
+INFO persistence
+```
+
+Key metrics:
+- `loading` - 1 if loading dataset, 0 otherwise
+- `rdb_changes_since_last_save` - Changes since last RDB
+- `rdb_bgsave_in_progress` - 1 if BGSAVE in progress
+- `rdb_last_save_time` - Unix timestamp of last successful save
+- `rdb_last_bgsave_status` - ok or err
+- `rdb_last_bgsave_time_sec` - Duration of last BGSAVE
+- `aof_enabled` - AOF status
+- `aof_rewrite_in_progress` - 1 if AOF rewrite in progress
+- `aof_last_rewrite_time_sec` - Duration of last rewrite
+- `aof_current_size` - Current AOF size
+- `aof_base_size` - AOF size at last rewrite
+
+#### Commandstats Section
+
+Per-command statistics:
+
+```bash
+INFO commandstats
+```
+
+Example output:
+```
+cmdstat_get:calls=12345,usec=123456,usec_per_call=10.00
+cmdstat_set:calls=23456,usec=234567,usec_per_call=10.00
+```
+
+Metrics per command:
+- `calls` - Number of times called
+- `usec` - Total microseconds consumed
+- `usec_per_call` - Average microseconds per call
+- `rejected_calls` - Number of rejected calls
+- `failed_calls` - Number of failed calls
+
+### Monitoring with INFO
+
+#### Key Metrics to Monitor
+
+```bash
+#!/bin/bash
+# Simple monitoring script
+
+echo "=== Redis Health Check ==="
+
+# Memory usage
+echo "Memory Usage:"
+redis-cli INFO memory | grep used_memory_human
+redis-cli INFO memory | grep mem_fragmentation_ratio
+
+# Operations per second
+echo "\nOperations/sec:"
+redis-cli INFO stats | grep instantaneous_ops_per_sec
+
+# Connected clients
+echo "\nClients:"
+redis-cli INFO clients | grep connected_clients
+
+# Hit rate
+echo "\nCache Hit Rate:"
+redis-cli INFO stats | grep keyspace_hits
+redis-cli INFO stats | grep keyspace_misses
+
+# Replication lag (for replicas)
+echo "\nReplication:"
+redis-cli INFO replication | grep master_link_status
+redis-cli INFO replication | grep master_last_io_seconds_ago
+```
+
+## MONITOR Command
+
+MONITOR streams all commands processed by the Redis server in real-time.
+
+### Basic Usage
+
+```bash
+redis-cli MONITOR
+```
+
+Example output:
+```
+OK
+1234567890.123456 [0 127.0.0.1:52376] "GET" "mykey"
+1234567890.234567 [0 127.0.0.1:52376] "SET" "mykey" "myvalue"
+1234567890.345678 [0 127.0.0.1:52377] "INCR" "counter"
+```
+
+Format:
+```
+<timestamp> [database client_address] "<command>" "<arg1>" "<arg2>" ...
+```
+
+### Use Cases
+
+#### Debug Application Issues
+
+See exactly what commands your application sends:
+
+```bash
+redis-cli MONITOR | grep "SET"
+```
+
+#### Identify Performance Problems
+
+Find slow or problematic queries:
+
+```bash
+# Monitor for specific patterns
+redis-cli MONITOR | grep "KEYS"
+redis-cli MONITOR | grep "FLUSHALL"
+```
+
+#### Audit Commands
+
+Track who's accessing what:
+
+```bash
+redis-cli MONITOR | tee redis-audit.log
+```
+
+<Warning>
+**Performance Impact**: MONITOR significantly impacts performance. The server must send every command to monitoring clients, which creates overhead. Use only for debugging and never in production under high load.
+</Warning>
+
+### MONITOR Best Practices
+
+- Use only for short debugging sessions
+- Avoid on production servers under load
+- Pipe output to `head` or `grep` to limit data
+- Consider SLOWLOG for production monitoring instead
+
+```bash
+# Monitor only first 100 commands
+redis-cli MONITOR | head -n 100
+
+# Monitor only SET commands
+redis-cli MONITOR | grep '"SET"'
+```
+
+## SLOWLOG Command
+
+SLOWLOG tracks queries exceeding a specified execution time threshold.
+
+### Configuration
+
+```conf
+# Log commands taking more than 10ms (10000 microseconds)
+slowlog-log-slower-than 10000
+
+# Keep last 128 slow queries
+slowlog-max-len 128
+```
+
+Runtime configuration:
+
+```bash
+# Log commands slower than 5ms
+CONFIG SET slowlog-log-slower-than 5000
+
+# Keep last 256 entries
+CONFIG SET slowlog-max-len 256
+
+# Log every command (for debugging)
+CONFIG SET slowlog-log-slower-than 0
+
+# Disable slow log
+CONFIG SET slowlog-log-slower-than -1
+```
+
+### SLOWLOG Subcommands
+
+#### SLOWLOG GET
+
+Retrieve slow log entries:
+
+```bash
+# Get all entries
+SLOWLOG GET
+
+# Get last 10 entries
+SLOWLOG GET 10
+```
+
+Example output:
+```
+1) 1) (integer) 14           # Unique ID
+   2) (integer) 1309448221   # Unix timestamp
+   3) (integer) 15000        # Execution time (microseconds)
+   4) 1) "KEYS"              # Command
+      2) "*"                 # Arguments
+   5) "127.0.0.1:52376"     # Client address
+   6) "myapp"               # Client name
+```
+
+Entry fields:
+1. Unique ID (monotonically increasing)
+2. Unix timestamp when command was executed
+3. Execution time in microseconds
+4. Array of command and arguments
+5. Client IP and port
+6. Client name (if set with CLIENT SETNAME)
+
+#### SLOWLOG LEN
+
+Get number of entries:
+
+```bash
+SLOWLOG LEN
+```
+
+#### SLOWLOG RESET
+
+Clear the slow log:
+
+```bash
+SLOWLOG RESET
+```
+
+### Analyzing Slow Queries
+
+#### Identify Common Slow Patterns
+
+```bash
+#!/bin/bash
+# Analyze slow log
+
+redis-cli SLOWLOG GET 100 | \
+    grep -A 1 '"[A-Z]*"' | \
+    grep '^   [0-9]' | \
+    sort | uniq -c | sort -rn | head -10
+```
+
+#### Monitor Slow Queries Continuously
+
+```bash
+#!/bin/bash
+# Continuous slow query monitoring
+
+LAST_ID=0
+
+while true; do
+    ENTRIES=$(redis-cli SLOWLOG GET)
+    # Process new entries since LAST_ID
+    # ... parsing logic ...
+    sleep 10
+done
+```
+
+### Common Slow Commands
+
+Commands that often appear in SLOWLOG:
+
+**KEYS Pattern**
+```bash
+KEYS *  # O(N) - scans all keys, very slow
+```
+Solution: Use `SCAN` instead
+
+**Large Collection Operations**
+```bash
+LRANGE mylist 0 -1  # Returns entire list
+SMEMBERS myset      # Returns entire set
+```
+Solution: Use pagination or smaller ranges
+
+**Expensive Commands**
+```bash
+SORT                 # O(N*log(N))
+SUNION large_sets   # O(N) where N is total elements
+ZINTERSTORE         # O(N*K) where K is number of sets
+```
+Solution: Pre-compute or use different data structures
+
+## Latency Monitoring
+
+Redis provides latency monitoring for various events:
+
+```bash
+# Enable latency monitoring (threshold in milliseconds)
+CONFIG SET latency-monitor-threshold 100
+
+# View latency spikes
+LATENCY DOCTOR
+
+# Get latency history for specific event
+LATENCY HISTORY command
+
+# Reset latency data
+LATENCY RESET
+```
+
+## Monitoring Best Practices
+
+<Steps>
+
+### Set Up Regular Health Checks
+
+Create a monitoring script that runs every minute:
+
+```bash
+#!/bin/bash
+# redis-health-check.sh
+
+# Check if Redis is running
+if ! redis-cli ping > /dev/null 2>&1; then
+    echo "CRITICAL: Redis is down"
+    exit 2
+fi
+
+# Check memory usage
+MEM_USAGE=$(redis-cli INFO memory | grep used_memory_human | cut -d: -f2)
+echo "Memory usage: $MEM_USAGE"
+
+# Check connected clients
+CLIENTS=$(redis-cli INFO clients | grep connected_clients | cut -d: -f2)
+echo "Connected clients: $CLIENTS"
+
+# Check operations per second
+OPS=$(redis-cli INFO stats | grep instantaneous_ops_per_sec | cut -d: -f2)
+echo "Ops/sec: $OPS"
+```
+
+### Configure Alerting
+
+Set up alerts for:
+- Memory usage > 80% of maxmemory
+- Connected clients approaching maxclients
+- Replication lag > 60 seconds
+- Slow queries > threshold
+- Failed BGSAVE operations
+
+### Use External Monitoring Tools
+
+Integrate with monitoring systems:
+- Prometheus with redis_exporter
+- Grafana dashboards
+- Datadog
+- New Relic
+- CloudWatch (AWS)
+
+### Regular SLOWLOG Review
+
+```bash
+# Daily slow query report
+redis-cli SLOWLOG GET 50 > daily-slow-$(date +%Y%m%d).log
+```
+
+### Monitor Key Metrics
+
+Track these metrics over time:
+- Operations per second
+- Memory usage and fragmentation
+- Cache hit rate
+- Replication lag
+- Client connections
+- Slow queries
+
+</Steps>
+
+## Monitoring Checklist
+
+- [ ] Configure appropriate slowlog threshold
+- [ ] Set up INFO-based health checks
+- [ ] Monitor memory usage and fragmentation
+- [ ] Track operations per second
+- [ ] Monitor cache hit rate
+- [ ] Check replication status (if using replicas)
+- [ ] Review slow log regularly
+- [ ] Set up alerting for critical metrics
+- [ ] Monitor persistence operations (BGSAVE/AOF)
+- [ ] Track client connections
+- [ ] Enable latency monitoring
+- [ ] Integrate with external monitoring tools
+
+## See Also
+
+- [Configuration](/operations/configuration)
+- [Performance Tuning](/operations/performance-tuning)
+- [Backup and Restore](/operations/backup-restore)
+- [Redis Monitoring Guide](https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/)

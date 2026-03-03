@@ -1,0 +1,115 @@
+---
+title: Client Libraries Overview
+description: Connect your application to Redis using official client libraries
+---
+
+To connect your application to Redis, you'll need a client library. Redis provides official and community-supported client libraries in most popular programming languages.
+
+## Official Client Libraries
+
+Redis maintains high-quality client libraries for the following languages:
+
+<CardGroup cols={2}>
+  <Card title="Python" icon="python" href="/clients/python">
+    redis-py - The official Python client
+  </Card>
+  <Card title="JavaScript" icon="js" href="/clients/javascript">
+    node-redis - The official Node.js client
+  </Card>
+  <Card title="Java" icon="java" href="/clients/java">
+    Jedis and Lettuce - Official Java clients
+  </Card>
+  <Card title="Go" icon="golang" href="/clients/go">
+    go-redis - The official Go client
+  </Card>
+  <Card title=".NET" icon="microsoft" href="/clients/dotnet">
+    NRedisStack and StackExchange.Redis
+  </Card>
+  <Card title="PHP" icon="php" href="https://redis.io/docs/latest/develop/clients/php/">
+    Predis - The official PHP client
+  </Card>
+</CardGroup>
+
+## Additional Client Libraries
+
+Redis also provides support for:
+
+- **C** - [hiredis](https://redis.io/docs/latest/develop/clients/hiredis/)
+- **Python AI** - [RedisVL](https://redis.io/docs/latest/integrate/redisvl/) for vector operations and AI workloads
+- **Community clients** - See the [full list of client libraries](https://redis.io/docs/latest/develop/clients/)
+
+## Quick Start Projects
+
+Get started quickly with ready-to-run starter projects:
+
+<Steps>
+  <Step title="Choose your language">
+    Select a starter project that matches your development stack:
+    
+    - [Python (redis-py)](https://github.com/redis-developer/redis-starter-python)
+    - [JavaScript (node-redis)](https://github.com/redis-developer/redis-starter-js)
+    - [Java/Spring (Jedis)](https://github.com/redis-developer/redis-starter-java)
+    - [Go (go-redis)](https://github.com/redis-developer/redis-starter-go)
+    - [C#/.NET (NRedisStack)](https://github.com/redis-developer/redis-starter-csharp)
+  </Step>
+  
+  <Step title="Clone and run">
+    Each starter project includes:
+    - Connection examples
+    - Basic CRUD operations
+    - Best practices
+    - Ready-to-run code samples
+  </Step>
+</Steps>
+
+## What Client Libraries Provide
+
+Redis client libraries offer:
+
+- **Connection Management** - Handle connections, connection pooling, and reconnection logic
+- **Command API** - Type-safe methods for all Redis commands
+- **Data Type Support** - Native support for Redis data structures (strings, hashes, lists, sets, sorted sets, JSON, streams)
+- **Advanced Features** - Support for pipelining, transactions, pub/sub, and Lua scripting
+- **Query Engine** - Full-text search, vector search, and aggregations
+- **Error Handling** - Proper error handling and timeout management
+
+## Choosing a Client
+
+When selecting a client library:
+
+<Tip>
+  Use official Redis client libraries when possible. They are actively maintained, well-documented, and support the latest Redis features.
+</Tip>
+
+Consider:
+- **Language ecosystem** - Choose the client for your programming language
+- **Features needed** - Ensure support for Redis modules (JSON, Search, TimeSeries) if required
+- **Performance requirements** - Some clients offer better performance for specific use cases
+- **Async support** - Check if you need asynchronous/non-blocking operations
+
+## Connection Methods
+
+All Redis clients support multiple connection methods:
+
+- **Direct connection** - Connect to a single Redis instance
+- **TLS/SSL** - Secure connections with encryption
+- **Sentinel** - High availability with automatic failover
+- **Cluster** - Distributed Redis deployments
+- **Cloud** - Connect to Redis Cloud with optimized settings
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Get Started with Python" icon="python" href="/clients/python">
+    Learn how to use redis-py
+  </Card>
+  <Card title="Get Started with JavaScript" icon="js" href="/clients/javascript">
+    Learn how to use node-redis
+  </Card>
+  <Card title="Get Started with Java" icon="java" href="/clients/java">
+    Learn how to use Jedis or Lettuce
+  </Card>
+  <Card title="Get Started with Go" icon="golang" href="/clients/go">
+    Learn how to use go-redis
+  </Card>
+</CardGroup>

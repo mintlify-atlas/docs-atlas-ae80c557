@@ -1,0 +1,389 @@
+---
+title: "String Commands"
+description: "Commands for working with Redis string values"
+---
+
+Strings are the most basic Redis data type. They can contain any kind of data: text, integers, serialized objects, or binary data up to 512 MB.
+
+## GET
+
+Returns the string value of a key.
+
+### Syntax
+
+```bash
+GET key
+```
+
+<ParamField path="key" type="key" required>
+  The key to retrieve.
+</ParamField>
+
+<ResponseField name="value" type="string">
+  The value of the key, or `nil` if the key does not exist.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> GET nonexisting
+(nil)
+redis> SET mykey "Hello"
+OK
+redis> GET mykey
+"Hello"
+```
+
+## SET
+
+Sets the string value of a key, ignoring its type. Creates the key if it doesn't exist.
+
+### Syntax
+
+```bash
+SET key value [NX | XX | IFEQ value | IFNE value | IFDEQ digest | IFDNE digest] 
+    [GET] [EX seconds | PX milliseconds | EXAT unix-time-seconds | 
+    PXAT unix-time-milliseconds | KEEPTTL]
+```
+
+<ParamField path="key" type="key" required>
+  The key to set.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  The value to set.
+</ParamField>
+
+<ParamField path="NX" type="option">
+  Only set the key if it does not already exist.
+</ParamField>
+
+<ParamField path="XX" type="option">
+  Only set the key if it already exists.
+</ParamField>
+
+<ParamField path="IFEQ" type="option">
+  Only set if current value equals the provided value.
+</ParamField>
+
+<ParamField path="IFNE" type="option">
+  Only set if current value does not equal the provided value.
+</ParamField>
+
+<ParamField path="GET" type="option">
+  Return the old value stored at key, or nil if key did not exist.
+</ParamField>
+
+<ParamField path="EX" type="option">
+  Set expiration time in seconds.
+</ParamField>
+
+<ParamField path="PX" type="option">
+  Set expiration time in milliseconds.
+</ParamField>
+
+<ParamField path="EXAT" type="option">
+  Set expiration as Unix timestamp in seconds.
+</ParamField>
+
+<ParamField path="PXAT" type="option">
+  Set expiration as Unix timestamp in milliseconds.
+</ParamField>
+
+<ParamField path="KEEPTTL" type="option">
+  Retain the TTL associated with the key.
+</ParamField>
+
+<ResponseField name="result" type="string">
+  - `OK` if SET was executed correctly
+  - `nil` if condition was not met or GET option returned nil
+  - Previous value if GET option was used
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+**History:**
+- **2.6.12**: Added `EX`, `PX`, `NX` and `XX` options.
+- **6.0.0**: Added the `KEEPTTL` option.
+- **6.2.0**: Added the `GET`, `EXAT` and `PXAT` options.
+- **7.0.0**: Allowed the `NX` and `GET` options to be used together.
+- **8.4.0**: Added `IFEQ`, `IFNE`, `IFDEQ`, `IFDNE` options.
+
+### Examples
+
+```bash
+redis> SET mykey "Hello"
+OK
+redis> GET mykey
+"Hello"
+redis> SET anotherkey "will expire in a minute" EX 60
+OK
+redis> SET mykey "new value" GET
+"Hello"
+redis> GET mykey
+"new value"
+redis> SET mykey "Hello" NX
+(nil)
+redis> SET newkey "World" NX
+OK
+```
+
+## INCR
+
+Increments the integer value of a key by one.
+
+### Syntax
+
+```bash
+INCR key
+```
+
+<ParamField path="key" type="key" required>
+  The key to increment. Must hold a string that can be represented as integer.
+</ParamField>
+
+<ResponseField name="value" type="integer">
+  The value of the key after incrementing.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> SET mykey "10"
+OK
+redis> INCR mykey
+(integer) 11
+redis> GET mykey
+"11"
+```
+
+<Warning>
+INCR operations are atomic. Multiple clients issuing INCR against the same key will never enter a race condition.
+</Warning>
+
+## DECR
+
+Decrements the integer value of a key by one.
+
+### Syntax
+
+```bash
+DECR key
+```
+
+<ParamField path="key" type="key" required>
+  The key to decrement. Must hold a string that can be represented as integer.
+</ParamField>
+
+<ResponseField name="value" type="integer">
+  The value of the key after decrementing.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> SET mykey "10"
+OK
+redis> DECR mykey
+(integer) 9
+redis> DECR newkey
+(integer) -1
+```
+
+## APPEND
+
+Appends a value to a key.
+
+### Syntax
+
+```bash
+APPEND key value
+```
+
+<ParamField path="key" type="key" required>
+  The key to append to. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  The value to append.
+</ParamField>
+
+<ResponseField name="length" type="integer">
+  The length of the string after the append operation.
+</ResponseField>
+
+**Time Complexity:** O(1). The amortized time complexity is O(1) assuming the appended value is small and the already present value is of any size.
+
+### Examples
+
+```bash
+redis> EXISTS mykey
+(integer) 0
+redis> APPEND mykey "Hello"
+(integer) 5
+redis> APPEND mykey " World"
+(integer) 11
+redis> GET mykey
+"Hello World"
+```
+
+## GETRANGE
+
+Returns a substring of the string stored at a key.
+
+### Syntax
+
+```bash
+GETRANGE key start end
+```
+
+<ParamField path="key" type="key" required>
+  The key containing the string.
+</ParamField>
+
+<ParamField path="start" type="integer" required>
+  The starting offset (0-based). Negative values count from the end.
+</ParamField>
+
+<ParamField path="end" type="integer" required>
+  The ending offset (inclusive). Negative values count from the end.
+</ParamField>
+
+<ResponseField name="substring" type="string">
+  The substring within the specified range.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the length of the returned string.
+
+### Examples
+
+```bash
+redis> SET mykey "This is a string"
+OK
+redis> GETRANGE mykey 0 3
+"This"
+redis> GETRANGE mykey -3 -1
+"ing"
+redis> GETRANGE mykey 0 -1
+"This is a string"
+redis> GETRANGE mykey 10 100
+"string"
+```
+
+## Related Commands
+
+### Additional String Commands
+
+- **GETSET**: Set value and return old value (deprecated, use SET with GET)
+- **SETEX**: Set with expiration (deprecated, use SET with EX)
+- **SETNX**: Set if not exists (deprecated, use SET with NX)
+- **MGET**: Get multiple keys
+- **MSET**: Set multiple keys
+- **MSETNX**: Set multiple keys only if none exist
+- **INCRBY**: Increment by integer
+- **INCRBYFLOAT**: Increment by float
+- **DECRBY**: Decrement by integer
+- **STRLEN**: Get string length
+- **SETRANGE**: Overwrite part of string
+- **GETDEL**: Get and delete key
+- **GETEX**: Get with expiration option
+
+## Use Cases
+
+### Counters
+
+Strings are perfect for counters using INCR/DECR:
+
+```bash
+redis> SET page:views 0
+OK
+redis> INCR page:views
+(integer) 1
+redis> INCRBY page:views 10
+(integer) 11
+```
+
+### Caching
+
+Store serialized objects with expiration:
+
+```bash
+redis> SET user:1000:profile "{\"name\":\"John\"}" EX 3600
+OK
+```
+
+### Rate Limiting
+
+Combine with expiration for rate limiting:
+
+```bash
+redis> SET rate:user:1000 1 EX 60 NX
+OK
+redis> INCR rate:user:1000
+(integer) 2
+```
+
+### Session Storage
+
+```bash
+redis> SET session:abc123 "{\"user_id\": 1000}" EX 1800
+OK
+```
+
+## Best Practices
+
+### Atomic Operations
+
+1. Use INCR/DECR for atomic counter updates
+2. Use SET NX for distributed locks
+3. Use SET XX GET for atomic swap
+
+### Memory Efficiency
+
+1. Use integers when possible (more efficient than strings)
+2. Compress large strings before storing
+3. Set appropriate expiration times
+4. Use APPEND for incremental updates
+
+### Performance
+
+1. Batch operations with MGET/MSET
+2. Use pipelining for multiple operations
+3. Avoid very large strings (> 1 MB)
+4. Use GETRANGE for partial reads
+
+<Warning>
+String values cannot exceed 512 MB in size.
+</Warning>
+
+## Pattern: Distributed Lock
+
+Implement a simple distributed lock using SET NX:
+
+```bash
+# Acquire lock
+redis> SET lock:resource1 "token123" NX EX 30
+OK
+
+# Release lock (use Lua script to ensure atomicity)
+redis> EVAL "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end" 1 lock:resource1 "token123"
+(integer) 1
+```
+
+## Pattern: Rate Limiting
+
+Implement token bucket rate limiting:
+
+```bash
+# Allow 10 requests per minute
+redis> SET rate:user:1000:tokens 10 EX 60 NX
+OK
+redis> DECR rate:user:1000:tokens
+(integer) 9
+```

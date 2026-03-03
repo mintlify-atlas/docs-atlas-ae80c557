@@ -1,0 +1,274 @@
+---
+title: 'Pub/Sub Messaging'
+description: 'Publish and subscribe to channels with Redis Pub/Sub'
+---
+
+Redis Pub/Sub provides a lightweight messaging system that enables clients to communicate through channels. Publishers send messages to channels, and subscribers receive all messages sent to the channels they're subscribed to.
+
+## Overview
+
+Pub/Sub in Redis implements a fire-and-forget messaging pattern with three key components:
+
+- **Publishers** send messages to channels
+- **Channels** are named message conduits
+- **Subscribers** receive messages from channels they subscribe to
+
+Messages are not persisted - they're delivered only to active subscribers at the time of publication.
+
+## Basic Commands
+
+### SUBSCRIBE
+
+Subscribe to one or more channels:
+
+```bash
+SUBSCRIBE channel1 channel2 channel3
+```
+
+The client enters pub/sub mode and receives notifications for:
+- Subscription confirmations
+- Messages published to subscribed channels
+- Unsubscription confirmations
+
+### PUBLISH
+
+Publish a message to a channel:
+
+```bash
+PUBLISH channel1 "Hello, subscribers!"
+```
+
+Returns the number of clients that received the message.
+
+### UNSUBSCRIBE
+
+Unsubscribe from channels:
+
+```bash
+# Unsubscribe from specific channels
+UNSUBSCRIBE channel1 channel2
+
+# Unsubscribe from all channels
+UNSUBSCRIBE
+```
+
+## Pattern Matching
+
+Redis supports pattern-based subscriptions using glob-style patterns.
+
+### PSUBSCRIBE
+
+Subscribe to channels matching a pattern:
+
+```bash
+# Subscribe to all news channels
+PSUBSCRIBE news.*
+
+# Subscribe to all channels starting with 'user:'
+PSUBSCRIBE user:*
+```
+
+Pattern matching supports:
+- `*` matches any characters
+- `?` matches a single character
+- `[abc]` matches one character from the set
+
+### PUNSUBSCRIBE
+
+Unsubscribe from pattern-based subscriptions:
+
+```bash
+# Unsubscribe from specific patterns
+PUNSUBSCRIBE news.*
+
+# Unsubscribe from all patterns
+PUNSUBSCRIBE
+```
+
+## Shard Pub/Sub (Cluster Mode)
+
+In cluster mode, shard pub/sub provides channel messaging scoped to specific hash slots.
+
+### SSUBSCRIBE
+
+Subscribe to shard channels:
+
+```bash
+SSUBSCRIBE {user:1000}:notifications {user:1001}:notifications
+```
+
+<Warning>
+Shard channels use the same hash slot calculation as keys. Channels with the same hash tag will be routed to the same shard.
+</Warning>
+
+### SPUBLISH
+
+Publish to a shard channel:
+
+```bash
+SPUBLISH {user:1000}:notifications "New message"
+```
+
+### SUNSUBSCRIBE
+
+Unsubscribe from shard channels:
+
+```bash
+SUNSUBSCRIBE {user:1000}:notifications
+```
+
+## Introspection Commands
+
+### PUBSUB CHANNELS
+
+List active channels:
+
+```bash
+# List all active channels
+PUBSUB CHANNELS
+
+# List channels matching a pattern
+PUBSUB CHANNELS news.*
+```
+
+### PUBSUB NUMSUB
+
+Get subscriber count for channels:
+
+```bash
+PUBSUB NUMSUB channel1 channel2
+```
+
+Returns an array of channel names and their subscriber counts.
+
+### PUBSUB NUMPAT
+
+Get the count of pattern subscriptions:
+
+```bash
+PUBSUB NUMPAT
+```
+
+### PUBSUB SHARDCHANNELS
+
+List active shard channels:
+
+```bash
+PUBSUB SHARDCHANNELS
+PUBSUB SHARDCHANNELS {user:*}:notifications
+```
+
+### PUBSUB SHARDNUMSUB
+
+Get subscriber count for shard channels:
+
+```bash
+PUBSUB SHARDNUMSUB {user:1000}:notifications
+```
+
+## Use Cases
+
+### Real-time Notifications
+
+```python
+import redis
+
+r = redis.Redis()
+
+# Publisher
+r.publish('notifications', 'New order received')
+
+# Subscriber
+pubsub = r.pubsub()
+pubsub.subscribe('notifications')
+
+for message in pubsub.listen():
+    if message['type'] == 'message':
+        print(f"Received: {message['data']}")
+```
+
+### Chat Application
+
+```python
+# Join a chat room
+pubsub.subscribe('chatroom:general')
+
+# Send a message
+r.publish('chatroom:general', 'Hello everyone!')
+```
+
+### Event Broadcasting
+
+```python
+# Subscribe to multiple event types
+pubsub.psubscribe('events:*')
+
+# Publish different events
+r.publish('events:user_login', 'user123')
+r.publish('events:order_created', 'order456')
+```
+
+## Message Format
+
+Subscribers receive messages in the following formats:
+
+**Subscribe confirmation:**
+```
+1) "subscribe"
+2) "channel1"
+3) (integer) 1  # Total subscriptions
+```
+
+**Message:**
+```
+1) "message"
+2) "channel1"
+3) "Hello, world!"
+```
+
+**Pattern message:**
+```
+1) "pmessage"
+2) "news.*"     # Pattern matched
+3) "news.tech"  # Actual channel
+4) "New article"
+```
+
+## Important Considerations
+
+<Warning>
+**No Message Persistence**: Messages are only delivered to active subscribers. If no subscribers are listening when a message is published, the message is lost.
+</Warning>
+
+<Warning>
+**Client State**: Once a client subscribes to a channel, it enters pub/sub mode and can only execute pub/sub-related commands until it unsubscribes from all channels.
+</Warning>
+
+### Performance Notes
+
+- Pub/Sub has minimal memory overhead - only active subscriptions are tracked
+- Pattern matching adds computational overhead proportional to the number of patterns
+- In cluster mode, global pub/sub messages are broadcast to all cluster nodes
+- Shard pub/sub is more efficient in clusters as messages are only sent to relevant shards
+
+## Limitations
+
+1. **No Message History**: Past messages cannot be retrieved
+2. **No Guaranteed Delivery**: Slow subscribers may miss messages
+3. **No Acknowledgments**: Publishers don't know if messages were processed
+4. **Fire-and-Forget**: No built-in retry mechanism
+
+For reliable messaging with persistence, consider using [Redis Streams](/features/streams) instead.
+
+## RESP3 Support
+
+With RESP3 protocol, pub/sub messages are delivered as push events, allowing clients to receive messages while executing other commands.
+
+```bash
+# Enable RESP3
+HELLO 3
+
+# Subscribe and continue using other commands
+SUBSCRIBE notifications
+GET mykey  # This works in RESP3
+```

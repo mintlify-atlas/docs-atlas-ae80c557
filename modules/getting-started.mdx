@@ -1,0 +1,349 @@
+---
+title: 'Getting Started with Module Development'
+description: 'Create your first Redis module with custom commands'
+---
+
+This guide walks you through creating a basic Redis module, from setup to loading and testing.
+
+## Prerequisites
+
+Before developing Redis modules, ensure you have:
+
+- Redis built from source (see [Build Instructions](/build/from-source))
+- C compiler (GCC or Clang)
+- Basic knowledge of C programming
+- Access to `src/redismodule.h` header file
+
+## Module Development Workflow
+
+<Steps>
+  <Step title="Create the Module Source File">
+    Create a new C file for your module. We'll create a simple "Hello World" module.
+
+    Create `helloworld.c`:
+
+    ```c
+    #include "redismodule.h"
+    #include <string.h>
+
+    /* HELLO.SIMPLE - Returns a simple greeting */
+    int HelloSimple_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+        return RedisModule_ReplyWithSimpleString(ctx, "Hello, World!");
+    }
+
+    /* HELLO.GREET <name> - Greets the user by name */
+    int HelloGreet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+        if (argc != 2) {
+            return RedisModule_WrongArity(ctx);
+        }
+
+        size_t len;
+        const char *name = RedisModule_StringPtrLen(argv[1], &len);
+        
+        RedisModule_ReplyWithSimpleString(ctx, RedisModule_Strdup("Hello, "));
+        return RedisModule_ReplyWithString(ctx, argv[1]);
+    }
+
+    /* Module initialization function */
+    int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+        if (RedisModule_Init(ctx, "helloworld", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
+            return REDISMODULE_ERR;
+
+        if (RedisModule_CreateCommand(ctx, "hello.simple",
+            HelloSimple_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
+            return REDISMODULE_ERR;
+
+        if (RedisModule_CreateCommand(ctx, "hello.greet",
+            HelloGreet_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
+            return REDISMODULE_ERR;
+
+        return REDISMODULE_OK;
+    }
+    ```
+  </Step>
+
+  <Step title="Compile the Module">
+    Compile your module into a shared library.
+
+    <CodeGroup>
+    ```bash Linux
+    gcc -fPIC -shared -o helloworld.so helloworld.c -I/path/to/redis/src
+    ```
+
+    ```bash macOS
+    gcc -dynamic -fno-common -o helloworld.so helloworld.c -I/path/to/redis/src
+    ```
+    </CodeGroup>
+
+    <Warning>
+    Make sure to replace `/path/to/redis/src` with the actual path to your Redis source directory containing `redismodule.h`.
+    </Warning>
+  </Step>
+
+  <Step title="Load the Module">
+    Start Redis and load your module using one of these methods:
+
+    **Method 1: Load at startup**
+    ```bash
+    redis-server --loadmodule ./helloworld.so
+    ```
+
+    **Method 2: Load at runtime**
+    ```bash
+    redis-cli MODULE LOAD /path/to/helloworld.so
+    ```
+
+    **Method 3: Add to redis.conf**
+    ```conf
+    loadmodule /path/to/helloworld.so
+    ```
+  </Step>
+
+  <Step title="Test Your Module Commands">
+    Connect with redis-cli and test your commands:
+
+    ```bash
+    $ redis-cli
+    127.0.0.1:6379> HELLO.SIMPLE
+    "Hello, World!"
+    127.0.0.1:6379> HELLO.GREET Alice
+    "Hello, Alice"
+    127.0.0.1:6379> MODULE LIST
+    1) 1) "name"
+       2) "helloworld"
+       3) "ver"
+       4) (integer) 1
+    ```
+  </Step>
+</Steps>
+
+## Understanding RedisModule_OnLoad
+
+The `RedisModule_OnLoad` function is the entry point for your module. It must:
+
+1. **Initialize the module** with `RedisModule_Init()`
+2. **Register commands** with `RedisModule_CreateCommand()`
+3. **Register data types** (if creating custom types)
+4. **Subscribe to events** (if needed)
+5. **Return status** (`REDISMODULE_OK` or `REDISMODULE_ERR`)
+
+```c
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+```
+
+Parameters:
+- `ctx` - Module context for API calls
+- `argv` - Module arguments from loadmodule command
+- `argc` - Number of arguments
+
+## RedisModule_Init Parameters
+
+```c
+int RedisModule_Init(RedisModuleCtx *ctx, const char *name, int ver, int apiver)
+```
+
+- `ctx` - Module context
+- `name` - Module name (must be unique)
+- `ver` - Module version number
+- `apiver` - API version (use `REDISMODULE_APIVER_1`)
+
+## Command Registration
+
+```c
+int RedisModule_CreateCommand(
+    RedisModuleCtx *ctx,
+    const char *name,
+    RedisModuleCmdFunc cmdfunc,
+    const char *strflags,
+    int firstkey,
+    int lastkey,
+    int keystep
+)
+```
+
+Parameters:
+- `name` - Command name (use dots for namespacing)
+- `cmdfunc` - Function pointer to command implementation
+- `strflags` - Space-separated command flags
+- `firstkey` - Position of first key argument (0 if none)
+- `lastkey` - Position of last key argument (0 if none)
+- `keystep` - Step between key arguments
+
+### Command Flags
+
+- `"readonly"` - Command doesn't modify data
+- `"write"` - Command modifies data
+- `"admin"` - Administrative command
+- `"deny-oom"` - Deny command when out of memory
+- `"allow-loading"` - Allow during loading
+- `"allow-stale"` - Allow on stale replica
+- `"no-monitor"` - Don't show in MONITOR
+- `"no-slowlog"` - Don't log in slow log
+- `"fast"` - Command is O(1) or very fast
+- `"getkeys-api"` - Uses RedisModule_KeyAtPos for key discovery
+- `"no-cluster"` - Don't allow in cluster mode
+- `"blocking"` - Command may block
+
+## Module Command Implementation
+
+Command functions must follow this signature:
+
+```c
+int MyCommand_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+```
+
+- Return `REDISMODULE_OK` after sending a reply
+- Return `REDISMODULE_ERR` to indicate internal error
+- `argv[0]` is the command name
+- `argv[1..argc-1]` are the command arguments
+
+### Example: Counter Command
+
+```c
+/* COUNTER.INCR <key> [amount] - Increment a counter */
+int CounterIncr_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc < 2 || argc > 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    // Enable automatic memory management
+    RedisModule_AutoMemory(ctx);
+
+    // Parse increment amount (default 1)
+    long long incr = 1;
+    if (argc == 3) {
+        if (RedisModule_StringToLongLong(argv[2], &incr) != REDISMODULE_OK) {
+            return RedisModule_ReplyWithError(ctx, "ERR invalid increment");
+        }
+    }
+
+    // Open key for writing
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_WRITE);
+    int keytype = RedisModule_KeyType(key);
+
+    // Check if key exists and is the right type
+    if (keytype != REDISMODULE_KEYTYPE_EMPTY && 
+        keytype != REDISMODULE_KEYTYPE_STRING) {
+        return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+    }
+
+    // Get current value
+    long long value = 0;
+    if (keytype == REDISMODULE_KEYTYPE_STRING) {
+        size_t len;
+        char *str = RedisModule_StringDMA(key, &len, REDISMODULE_READ);
+        if (str == NULL || sscanf(str, "%lld", &value) != 1) {
+            return RedisModule_ReplyWithError(ctx, "ERR value is not an integer");
+        }
+    }
+
+    // Increment value
+    value += incr;
+
+    // Save new value
+    RedisModuleString *newval = RedisModule_CreateStringFromLongLong(ctx, value);
+    RedisModule_StringSet(key, newval);
+
+    // Replicate command
+    RedisModule_ReplicateVerbatim(ctx);
+
+    return RedisModule_ReplyWithLongLong(ctx, value);
+}
+```
+
+## Error Handling
+
+Always check return values:
+
+```c
+if (RedisModule_StringToLongLong(argv[1], &value) != REDISMODULE_OK) {
+    return RedisModule_ReplyWithError(ctx, "ERR invalid integer");
+}
+
+RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_WRITE);
+if (RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_MODULE) {
+    // Wrong type
+    return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+}
+```
+
+## Memory Management
+
+Use `RedisModule_AutoMemory(ctx)` to automatically free allocations:
+
+```c
+int MyCommand_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx); // Auto-free on function return
+    
+    RedisModuleString *str = RedisModule_CreateString(ctx, "data", 4);
+    // No need to free str - handled automatically
+    
+    return REDISMODULE_OK;
+}
+```
+
+Or manage memory manually:
+
+```c
+RedisModuleString *str = RedisModule_CreateString(ctx, "data", 4);
+RedisModule_FreeString(ctx, str);
+```
+
+## Build System Integration
+
+Create a Makefile for your module:
+
+```makefile
+REDIS_SRC = /path/to/redis/src
+CFLAGS = -fPIC -std=c99 -I$(REDIS_SRC)
+LDFLAGS = -shared
+
+helloworld.so: helloworld.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+
+clean:
+	rm -f *.so *.o
+
+test: helloworld.so
+	redis-server --loadmodule ./helloworld.so &
+	sleep 1
+	redis-cli HELLO.SIMPLE
+	redis-cli SHUTDOWN
+```
+
+## Module Configuration
+
+Accept configuration parameters in `RedisModule_OnLoad`:
+
+```c
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (RedisModule_Init(ctx, "mymodule", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    // Parse module arguments
+    for (int i = 0; i < argc; i++) {
+        const char *arg = RedisModule_StringPtrLen(argv[i], NULL);
+        if (strcmp(arg, "--verbose") == 0) {
+            verbose = 1;
+        }
+    }
+
+    return REDISMODULE_OK;
+}
+```
+
+Load with arguments:
+```bash
+redis-server --loadmodule ./mymodule.so --verbose
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Data Types" icon="database" href="/modules/data-types">
+    Learn to create custom data types with persistence
+  </Card>
+  <Card title="Module Commands" icon="terminal" href="/modules/commands">
+    Advanced command registration and implementation
+  </Card>
+</CardGroup>

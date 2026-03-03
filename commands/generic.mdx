@@ -1,0 +1,396 @@
+---
+title: "Generic Commands"
+description: "Key management commands that work with all Redis data types"
+---
+
+Generic commands operate on keys regardless of their data type. These commands handle key lifecycle, expiration, pattern matching, and type inspection.
+
+## DEL
+
+Deletes one or more keys.
+
+### Syntax
+
+```bash
+DEL key [key ...]
+```
+
+<ParamField path="key" type="key" required>
+  The key(s) to delete. Multiple keys can be specified.
+</ParamField>
+
+<ResponseField name="integer" type="integer">
+  The number of keys that were removed.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of keys. For string keys, O(1) per key. For other types, O(M) where M is the number of elements.
+
+### Examples
+
+```bash
+redis> SET key1 "Hello"
+OK
+redis> SET key2 "World"
+OK
+redis> DEL key1 key2 key3
+(integer) 2
+```
+
+## EXISTS
+
+Determines whether one or more keys exist.
+
+### Syntax
+
+```bash
+EXISTS key [key ...]
+```
+
+<ParamField path="key" type="key" required>
+  The key(s) to check. Multiple keys can be specified.
+</ParamField>
+
+<ResponseField name="count" type="integer">
+  Number of keys that exist. If the same key is mentioned multiple times, it will be counted multiple times.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of keys to check.
+
+**History:**
+- **3.0.3**: Accepts multiple `key` arguments.
+
+### Examples
+
+```bash
+redis> SET key1 "Hello"
+OK
+redis> EXISTS key1
+(integer) 1
+redis> EXISTS nosuchkey
+(integer) 0
+redis> SET key2 "World"
+OK
+redis> EXISTS key1 key2 nosuchkey
+(integer) 2
+```
+
+## EXPIRE
+
+Sets the expiration time of a key in seconds.
+
+### Syntax
+
+```bash
+EXPIRE key seconds [NX | XX | GT | LT]
+```
+
+<ParamField path="key" type="key" required>
+  The key to set expiration on.
+</ParamField>
+
+<ParamField path="seconds" type="integer" required>
+  The expiration time in seconds.
+</ParamField>
+
+<ParamField path="NX" type="option">
+  Set expiry only when the key has no expiry.
+</ParamField>
+
+<ParamField path="XX" type="option">
+  Set expiry only when the key has an existing expiry.
+</ParamField>
+
+<ParamField path="GT" type="option">
+  Set expiry only when the new expiry is greater than current one.
+</ParamField>
+
+<ParamField path="LT" type="option">
+  Set expiry only when the new expiry is less than current one.
+</ParamField>
+
+<ResponseField name="result" type="integer">
+  - `1` if the timeout was set
+  - `0` if the timeout was not set (key doesn't exist or condition not met)
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+**History:**
+- **7.0.0**: Added options: `NX`, `XX`, `GT` and `LT`.
+
+### Examples
+
+```bash
+redis> SET mykey "Hello"
+OK
+redis> EXPIRE mykey 10
+(integer) 1
+redis> TTL mykey
+(integer) 10
+redis> SET mykey "Hello World"
+OK
+redis> TTL mykey
+(integer) -1
+redis> EXPIRE mykey 10 XX
+(integer) 0
+redis> TTL mykey
+(integer) -1
+redis> EXPIRE mykey 10 NX
+(integer) 1
+redis> TTL mykey
+(integer) 10
+```
+
+## TTL
+
+Returns the remaining time to live of a key in seconds.
+
+### Syntax
+
+```bash
+TTL key
+```
+
+<ParamField path="key" type="key" required>
+  The key to get TTL for.
+</ParamField>
+
+<ResponseField name="ttl" type="integer">
+  - TTL in seconds
+  - `-1` if the key exists but has no associated expire
+  - `-2` if the key does not exist
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+**History:**
+- **2.8.0**: Added the -2 reply.
+
+### Examples
+
+```bash
+redis> SET mykey "Hello"
+OK
+redis> EXPIRE mykey 10
+(integer) 1
+redis> TTL mykey
+(integer) 10
+redis> SET mykey "Hello" EX 30
+OK
+redis> TTL mykey
+(integer) 30
+```
+
+## KEYS
+
+Returns all key names that match a pattern.
+
+### Syntax
+
+```bash
+KEYS pattern
+```
+
+<ParamField path="pattern" type="pattern" required>
+  The glob-style pattern to match. Supported patterns:
+  - `*` matches any characters
+  - `?` matches a single character
+  - `[abc]` matches one character from the set
+  - `[a-z]` matches one character from the range
+  - `\` escapes special characters
+</ParamField>
+
+<ResponseField name="keys" type="array">
+  List of keys matching the pattern.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of keys in the database.
+
+<Warning>
+KEYS should not be used in production code as it blocks the server. Use SCAN instead for iterating keys.
+</Warning>
+
+### Examples
+
+```bash
+redis> MSET firstname Jack lastname Stuntman age 35
+OK
+redis> KEYS *name*
+1) "firstname"
+2) "lastname"
+redis> KEYS a??
+1) "age"
+redis> KEYS *
+1) "firstname"
+2) "age"
+3) "lastname"
+```
+
+## SCAN
+
+Iterates over the key names in the database using a cursor.
+
+### Syntax
+
+```bash
+SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]
+```
+
+<ParamField path="cursor" type="integer" required>
+  The cursor position. Use 0 to start iteration.
+</ParamField>
+
+<ParamField path="MATCH" type="option">
+  Only return keys matching the given pattern.
+</ParamField>
+
+<ParamField path="COUNT" type="option">
+  Hint for how many elements to return per call (default 10).
+</ParamField>
+
+<ParamField path="TYPE" type="option">
+  Only return keys of this type (string, list, set, zset, hash, stream).
+</ParamField>
+
+<ResponseField name="result" type="array">
+  Array with two elements:
+  1. The next cursor position (0 when iteration is complete)
+  2. Array of keys
+</ResponseField>
+
+**Time Complexity:** O(1) for each call. O(N) for complete iteration where N is the number of keys.
+
+**History:**
+- **6.0.0**: Added the `TYPE` subcommand.
+
+### Examples
+
+```bash
+redis> SCAN 0
+1) "17"
+2)  1) "key:12"
+    2) "key:8"
+    3) "key:4"
+    4) "key:14"
+    5) "key:16"
+    6) "key:17"
+    7) "key:15"
+    8) "key:10"
+    9) "key:3"
+   10) "key:7"
+   11) "key:1"
+redis> SCAN 17
+1) "0"
+2) 1) "key:5"
+   2) "key:18"
+   3) "key:0"
+   4) "key:2"
+   5) "key:19"
+   6) "key:13"
+   7) "key:6"
+   8) "key:9"
+   9) "key:11"
+redis> SCAN 0 MATCH key:1* COUNT 100
+1) "0"
+2) 1) "key:12"
+   2) "key:18"
+   3) "key:11"
+   4) "key:15"
+   5) "key:17"
+   6) "key:1"
+   7) "key:16"
+   8) "key:14"
+   9) "key:19"
+  10) "key:10"
+  11) "key:13"
+redis> SCAN 0 TYPE string
+1) "0"
+2) 1) "key:0"
+   2) "key:2"
+   3) "key:1"
+```
+
+## TYPE
+
+Determines the type of value stored at a key.
+
+### Syntax
+
+```bash
+TYPE key
+```
+
+<ParamField path="key" type="key" required>
+  The key to inspect.
+</ParamField>
+
+<ResponseField name="type" type="string">
+  Type of the key:
+  - `string`
+  - `list`
+  - `set`
+  - `zset` (sorted set)
+  - `hash`
+  - `stream`
+  - `none` (key doesn't exist)
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> SET key1 "value"
+OK
+redis> LPUSH key2 "value"
+(integer) 1
+redis> SADD key3 "value"
+(integer) 1
+redis> TYPE key1
+string
+redis> TYPE key2
+list
+redis> TYPE key3
+set
+redis> TYPE nosuchkey
+none
+```
+
+## Related Commands
+
+- **PERSIST**: Remove expiration from a key
+- **EXPIREAT**: Set expiration as Unix timestamp
+- **PEXPIRE**: Set expiration in milliseconds
+- **PTTL**: Get TTL in milliseconds
+- **RENAME**: Rename a key
+- **RENAMENX**: Rename a key only if new key doesn't exist
+- **DUMP**: Serialize key value
+- **RESTORE**: Deserialize key value
+- **TOUCH**: Update last access time
+- **UNLINK**: Async delete
+
+## Best Practices
+
+### Key Naming
+
+1. Use consistent naming conventions (e.g., `object:id:field`)
+2. Keep names readable but concise
+3. Use colons to separate logical parts
+4. Avoid special characters
+
+### Expiration
+
+1. Always set TTL on temporary data
+2. Use EXPIRE with conditions (NX, XX, GT, LT) for precise control
+3. Monitor expired keys with INFO stats
+
+### Iteration
+
+1. Always use SCAN instead of KEYS in production
+2. Use MATCH patterns to filter results
+3. Adjust COUNT for optimal performance
+4. Handle full iterations by checking cursor = 0
+
+<Warning>
+DEL is synchronous and can block the server for large keys. Consider using UNLINK for async deletion of large keys.
+</Warning>

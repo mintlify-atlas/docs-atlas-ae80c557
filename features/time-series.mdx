@@ -1,0 +1,641 @@
+---
+title: 'Time Series Data'
+description: 'Store and query time-series data efficiently with automatic downsampling and retention policies'
+---
+
+Redis Time Series provides specialized data structures and commands for storing and querying time-series data. It's optimized for use cases like monitoring, sensor data, stock prices, and analytics where data points are indexed by timestamp.
+
+## Overview
+
+Redis Time Series offers:
+
+- **Efficient Storage**: Compressed time-series data storage
+- **Automatic Downsampling**: Create aggregated views automatically
+- **Retention Policies**: Automatically expire old data
+- **Labels**: Tag time series with metadata for filtering and grouping
+- **Aggregations**: Built-in functions for sum, avg, min, max, range, and more
+- **High Performance**: Optimized for append and range queries
+
+<Warning>
+Time Series requires building Redis with modules enabled:
+
+```bash
+make BUILD_WITH_MODULES=yes
+```
+
+This feature is marked with an asterisk (*) in the README and is only available when compiled with module support.
+</Warning>
+
+## Creating a Time Series
+
+### Basic Creation
+
+```bash
+TS.CREATE temperature:sensor1
+```
+
+Creates an empty time series named `temperature:sensor1`.
+
+### With Retention Policy
+
+```bash
+TS.CREATE temperature:sensor1 
+  RETENTION 86400000  # Keep data for 24 hours (milliseconds)
+```
+
+Older data is automatically deleted.
+
+### With Labels
+
+```bash
+TS.CREATE temperature:sensor1 
+  RETENTION 86400000 
+  LABELS sensor_id 1 location "warehouse" type "temperature"
+```
+
+Labels enable filtering and grouping across multiple time series.
+
+### With Duplicate Policy
+
+```bash
+TS.CREATE stock:AAPL 
+  DUPLICATE_POLICY LAST  # Keep only the latest value for duplicate timestamps
+```
+
+**Duplicate policies:**
+- `BLOCK`: Reject duplicates (default)
+- `FIRST`: Keep first value
+- `LAST`: Keep last value
+- `MIN`: Keep minimum value
+- `MAX`: Keep maximum value
+- `SUM`: Sum all values
+
+## Adding Data Points
+
+### Add Single Point
+
+```bash
+# Add current timestamp
+TS.ADD temperature:sensor1 * 23.5
+
+# Add specific timestamp (Unix milliseconds)
+TS.ADD temperature:sensor1 1609459200000 24.1
+```
+
+### Add Multiple Points
+
+```bash
+TS.MADD 
+  temperature:sensor1 1609459200000 23.5 
+  temperature:sensor2 1609459200000 25.1 
+  humidity:sensor1 1609459200000 65.3
+```
+
+More efficient than multiple `TS.ADD` commands.
+
+### Increment Value
+
+```bash
+# Increment counter
+TS.INCRBY counter:requests * 1
+
+# Decrement counter
+TS.DECRBY counter:active_connections * 1
+```
+
+Useful for counters and gauges.
+
+## Querying Data
+
+### Get Latest Value
+
+```bash
+TS.GET temperature:sensor1
+```
+
+Returns: `[timestamp, value]`
+
+### Get Range
+
+```bash
+# Get last hour of data
+TS.RANGE temperature:sensor1 - +
+
+# Get specific time range (Unix milliseconds)
+TS.RANGE temperature:sensor1 1609459200000 1609545600000
+
+# With aggregation (5-minute averages)
+TS.RANGE temperature:sensor1 - + AGGREGATION avg 300000
+```
+
+**Time range syntax:**
+- `-`: Oldest timestamp in series
+- `+`: Newest timestamp in series
+- Unix timestamp in milliseconds
+- Relative: `-10m` (10 minutes ago), `-1h`, `-1d`
+
+### Get Multiple Series
+
+```bash
+# Get latest from multiple series
+TS.MGET FILTER location=warehouse
+
+# Get ranges from multiple series
+TS.MRANGE - + FILTER type=temperature
+
+# With aggregation
+TS.MRANGE - + AGGREGATION avg 60000 FILTER location=warehouse
+```
+
+## Aggregations
+
+Time Series supports built-in aggregation functions:
+
+| Function | Description |
+|----------|-------------|
+| `avg` | Average |
+| `sum` | Sum |
+| `min` | Minimum |
+| `max` | Maximum |
+| `range` | max - min |
+| `count` | Number of samples |
+| `first` | First value |
+| `last` | Last value |
+| `std.p` | Population standard deviation |
+| `std.s` | Sample standard deviation |
+| `var.p` | Population variance |
+| `var.s` | Sample variance |
+
+### Example: 1-minute Averages
+
+```bash
+TS.RANGE temperature:sensor1 - + 
+  AGGREGATION avg 60000  # 60000ms = 1 minute
+```
+
+### Example: Hourly Max
+
+```bash
+TS.RANGE stock:AAPL 1609459200000 1609545600000 
+  AGGREGATION max 3600000  # 3600000ms = 1 hour
+```
+
+## Compaction Rules
+
+Automatically create downsampled views of time series.
+
+### Create Compaction Destination
+
+```bash
+# Create destination for 1-minute averages
+TS.CREATE temperature:sensor1:avg:1m 
+  RETENTION 604800000  # Keep 7 days of minute data
+
+# Create compaction rule
+TS.CREATERULE temperature:sensor1 temperature:sensor1:avg:1m 
+  AGGREGATION avg 60000
+```
+
+Now every minute, the average is automatically calculated and stored in `temperature:sensor1:avg:1m`.
+
+### Multiple Aggregation Levels
+
+```bash
+# Raw data (24 hours)
+TS.CREATE metrics:cpu RETENTION 86400000
+
+# 1-minute averages (7 days)
+TS.CREATE metrics:cpu:1m RETENTION 604800000
+TS.CREATERULE metrics:cpu metrics:cpu:1m AGGREGATION avg 60000
+
+# 1-hour averages (30 days)
+TS.CREATE metrics:cpu:1h RETENTION 2592000000
+TS.CREATERULE metrics:cpu metrics:cpu:1h AGGREGATION avg 3600000
+
+# 1-day averages (1 year)
+TS.CREATE metrics:cpu:1d RETENTION 31536000000
+TS.CREATERULE metrics:cpu metrics:cpu:1d AGGREGATION avg 86400000
+```
+
+This creates a multi-resolution time series:
+- High resolution for recent data
+- Lower resolution for historical data
+- Automatic retention management
+
+## Filtering with Labels
+
+### Query by Label
+
+```bash
+# Get all temperature sensors in warehouse
+TS.MGET FILTER location=warehouse type=temperature
+
+# Get all sensors except maintenance
+TS.MGET FILTER status!=(maintenance)
+
+# Multiple conditions (AND)
+TS.MGET FILTER location=warehouse type=temperature status=active
+
+# OR conditions
+TS.MGET FILTER location=(warehouse|datacenter) type=temperature
+```
+
+### Get Range with Filter
+
+```bash
+# Get last hour from all warehouse sensors
+TS.MRANGE - + FILTER location=warehouse
+
+# With aggregation
+TS.MRANGE - + AGGREGATION avg 300000 FILTER location=warehouse
+```
+
+## Grouping and Aggregating
+
+### Group by Label
+
+```bash
+# Average temperature by location
+TS.MRANGE - + 
+  AGGREGATION avg 300000 
+  FILTER type=temperature 
+  GROUPBY location 
+  REDUCE avg
+```
+
+**Reduce functions:**
+- `sum`: Sum all series in group
+- `min`: Minimum across series
+- `max`: Maximum across series
+- `avg`: Average across series
+- `range`: max - min
+- `count`: Number of series
+- `std.p` / `std.s`: Standard deviation
+- `var.p` / `var.s`: Variance
+
+### Example: CPU by Server
+
+```bash
+TS.MRANGE - + 
+  AGGREGATION avg 60000 
+  FILTER metric=cpu 
+  GROUPBY server 
+  REDUCE avg
+```
+
+Returns average CPU usage per server over 1-minute windows.
+
+## Real-World Examples
+
+### IoT Sensor Monitoring
+
+<Steps>
+
+<Step title="Create time series for sensors">
+
+```bash
+# Temperature sensors
+TS.CREATE temp:warehouse:1 
+  RETENTION 2592000000 
+  LABELS sensor_id 1 location warehouse type temperature unit celsius
+
+TS.CREATE temp:warehouse:2 
+  RETENTION 2592000000 
+  LABELS sensor_id 2 location warehouse type temperature unit celsius
+
+# Humidity sensors
+TS.CREATE humidity:warehouse:1 
+  RETENTION 2592000000 
+  LABELS sensor_id 1 location warehouse type humidity unit percent
+```
+</Step>
+
+<Step title="Add sensor readings">
+
+```bash
+# Add current readings
+TS.MADD 
+  temp:warehouse:1 * 22.5 
+  temp:warehouse:2 * 23.1 
+  humidity:warehouse:1 * 65.3
+```
+</Step>
+
+<Step title="Query data">
+
+```bash
+# Get latest from all warehouse sensors
+TS.MGET FILTER location=warehouse
+
+# Get last hour of temperature data
+TS.MRANGE - + 
+  FILTER location=warehouse type=temperature
+
+# Average temperature in 5-minute windows
+TS.MRANGE - + 
+  AGGREGATION avg 300000 
+  FILTER location=warehouse type=temperature 
+  GROUPBY location 
+  REDUCE avg
+```
+</Step>
+
+</Steps>
+
+### Application Metrics
+
+```python
+import redis
+import time
+
+r = redis.Redis(decode_responses=True)
+
+# Create metric time series
+r.ts().create(
+    "metrics:requests",
+    retention_msecs=86400000,  # 24 hours
+    labels={"metric": "requests", "app": "api"}
+)
+
+r.ts().create(
+    "metrics:errors",
+    retention_msecs=86400000,
+    labels={"metric": "errors", "app": "api"}
+)
+
+# Record metrics
+def record_request(success: bool):
+    timestamp = int(time.time() * 1000)
+    r.ts().incrby("metrics:requests", 1, timestamp=timestamp)
+    if not success:
+        r.ts().incrby("metrics:errors", 1, timestamp=timestamp)
+
+# Query metrics
+def get_error_rate(duration_minutes: int = 5):
+    """Calculate error rate over last N minutes."""
+    duration_ms = duration_minutes * 60 * 1000
+    
+    # Get total requests
+    requests = r.ts().range(
+        "metrics:requests",
+        from_time=f"-{duration_ms}",
+        to_time="+",
+        aggregation_type="sum",
+        bucket_size_msec=duration_ms
+    )
+    
+    # Get total errors
+    errors = r.ts().range(
+        "metrics:errors",
+        from_time=f"-{duration_ms}",
+        to_time="+",
+        aggregation_type="sum",
+        bucket_size_msec=duration_ms
+    )
+    
+    if requests and requests[0][1] > 0:
+        error_rate = (errors[0][1] / requests[0][1]) * 100
+        return f"{error_rate:.2f}%"
+    return "0%"
+```
+
+### Stock Price Tracking
+
+```bash
+# Create time series for stock prices
+TS.CREATE stock:AAPL 
+  RETENTION 7776000000 
+  DUPLICATE_POLICY LAST 
+  LABELS symbol AAPL exchange NASDAQ type stock
+
+TS.CREATE stock:GOOGL 
+  RETENTION 7776000000 
+  DUPLICATE_POLICY LAST 
+  LABELS symbol GOOGL exchange NASDAQ type stock
+
+# Add price data
+TS.MADD 
+  stock:AAPL * 150.25 
+  stock:GOOGL * 2750.50
+
+# Get daily high/low
+TS.RANGE stock:AAPL - + AGGREGATION max 86400000  # Daily high
+TS.RANGE stock:AAPL - + AGGREGATION min 86400000  # Daily low
+
+# Compare stocks
+TS.MGET FILTER exchange=NASDAQ type=stock
+```
+
+## Information and Administration
+
+### Get Time Series Info
+
+```bash
+TS.INFO temperature:sensor1
+```
+
+Returns:
+- Total samples
+- Memory usage
+- First/last timestamps
+- Retention policy
+- Labels
+- Compaction rules
+
+### List All Rules
+
+```bash
+TS.QUERYINDEX location=warehouse
+```
+
+Returns all time series matching the filter.
+
+### Delete Rule
+
+```bash
+TS.DELETERULE source_key dest_key
+```
+
+### Alter Time Series
+
+```bash
+# Change retention
+TS.ALTER temperature:sensor1 RETENTION 172800000
+
+# Add labels
+TS.ALTER temperature:sensor1 LABELS sensor_id 1 status active
+```
+
+## Performance Optimization
+
+### 1. Use Appropriate Retention
+
+Don't keep data longer than needed:
+
+```bash
+# Good: 24 hours for high-frequency data
+TS.CREATE metrics:cpu RETENTION 86400000
+
+# Bad: Unlimited retention for high-frequency data
+TS.CREATE metrics:cpu  # No retention = keeps forever
+```
+
+### 2. Use Compaction for Long-term Storage
+
+```bash
+# Keep raw data short-term, aggregated data long-term
+TS.CREATE temp:raw RETENTION 86400000      # 1 day raw
+TS.CREATE temp:1h RETENTION 2592000000      # 30 days hourly
+TS.CREATERULE temp:raw temp:1h AGGREGATION avg 3600000
+```
+
+### 3. Use MADD for Batch Inserts
+
+```python
+# Good: Batch insert
+r.ts().madd([
+    ("temp:1", "*", 23.5),
+    ("temp:2", "*", 24.1),
+    ("humidity:1", "*", 65.0)
+])
+
+# Bad: Individual inserts
+r.ts().add("temp:1", "*", 23.5)
+r.ts().add("temp:2", "*", 24.1)
+r.ts().add("humidity:1", "*", 65.0)
+```
+
+### 4. Use Labels for Filtering
+
+```bash
+# Good: Filter by labels
+TS.MGET FILTER location=warehouse status=active
+
+# Bad: Query all series and filter client-side
+```
+
+### 5. Pre-aggregate When Possible
+
+If you always query with the same aggregation, use compaction rules:
+
+```bash
+# Instead of querying with AGGREGATION every time
+TS.RANGE metrics:cpu - + AGGREGATION avg 60000
+
+# Create a compaction rule once
+TS.CREATERULE metrics:cpu metrics:cpu:1m AGGREGATION avg 60000
+# Then query the pre-aggregated series
+TS.RANGE metrics:cpu:1m - +
+```
+
+## Limitations
+
+<Warning>
+**Module Requirement**: Time Series is only available when Redis is built with `BUILD_WITH_MODULES=yes`.
+</Warning>
+
+- Data is stored in memory
+- Updates to historical data points not supported (append-only)
+- Compaction rules cannot be chained (no rule on a compacted series)
+- Label changes don't apply retroactively
+
+## Best Practices
+
+### 1. Plan Your Retention Policy
+
+```bash
+# Different retention for different data
+TS.CREATE metrics:realtime RETENTION 3600000      # 1 hour
+TS.CREATE metrics:hourly RETENTION 2592000000     # 30 days
+TS.CREATE metrics:daily RETENTION 31536000000     # 1 year
+```
+
+### 2. Use Meaningful Labels
+
+```bash
+# Good labels
+LABELS 
+  sensor_id 1 
+  location warehouse_a 
+  floor 2 
+  type temperature 
+  unit celsius
+
+# Bad labels  
+LABELS s1 w1  # Unclear meaning
+```
+
+### 3. Choose Appropriate Aggregation Windows
+
+```bash
+# For dashboards: Match refresh rate
+AGGREGATION avg 60000  # 1-minute for 60-second dashboard refresh
+
+# For alerts: Match alert evaluation period
+AGGREGATION max 300000  # 5-minute for 5-minute alert checks
+```
+
+### 4. Use Duplicate Policies Wisely
+
+```bash
+# For gauges: LAST
+TS.CREATE metrics:cpu DUPLICATE_POLICY LAST
+
+# For counters: SUM
+TS.CREATE metrics:requests DUPLICATE_POLICY SUM
+
+# For stock prices: LAST
+TS.CREATE stock:AAPL DUPLICATE_POLICY LAST
+```
+
+## Common Patterns
+
+### Rate Calculation
+
+```python
+def calculate_rate(series: str, window_ms: int = 60000) -> float:
+    """Calculate rate of change per second."""
+    data = r.ts().range(series, "-", "+", aggregation_type="sum", bucket_size_msec=window_ms)
+    if len(data) >= 2:
+        delta_value = data[-1][1] - data[-2][1]
+        delta_time = (data[-1][0] - data[-2][0]) / 1000  # Convert to seconds
+        return delta_value / delta_time
+    return 0.0
+```
+
+### Percentile Calculation
+
+```python
+import numpy as np
+
+def get_percentile(series: str, percentile: int = 95) -> float:
+    """Calculate percentile from time series data."""
+    data = r.ts().range(series, "-", "+")
+    values = [point[1] for point in data]
+    return np.percentile(values, percentile)
+```
+
+### Anomaly Detection
+
+```python
+def detect_anomaly(series: str, threshold_stddev: float = 3.0) -> bool:
+    """Detect if latest value is an anomaly (> N std deviations)."""
+    # Get recent data
+    data = r.ts().range(series, "-3600000", "+")  # Last hour
+    if len(data) < 10:
+        return False
+    
+    values = [point[1] for point in data]
+    mean = np.mean(values)
+    std = np.std(values)
+    latest = values[-1]
+    
+    # Check if latest value is beyond threshold
+    return abs(latest - mean) > (threshold_stddev * std)
+```
+
+## See Also
+
+- [Query Engine](/features/query-engine) - Full-text search and secondary indexes
+- [Probabilistic Data Structures](/features/probabilistic) - Space-efficient approximations
+- [Sorted Sets](/features/sorted-sets) - Alternative for time-series use cases

@@ -1,0 +1,243 @@
+---
+title: Strings
+description: Binary-safe strings are Redis's most versatile data type, supporting text, serialized objects, and atomic operations
+---
+
+Redis strings are binary-safe sequences of bytes with a maximum size of 512 MB. They're the most versatile data type in Redis and can store text, serialized JSON/protobuf, integers, or even binary data like images.
+
+## Use Cases
+
+- **Caching**: Store frequently accessed data
+- **Session storage**: Single-field session data
+- **Counters**: Page views, likes, downloads
+- **Distributed locks**: Coordinate distributed systems
+- **Rate limiting**: Track request counts
+- **Bitfields**: Compact integer arrays
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Set and get values
+redis> SET mykey "Hello Redis"
+OK
+redis> GET mykey
+"Hello Redis"
+
+# Set multiple keys at once
+redis> MSET key1 "value1" key2 "value2" key3 "value3"
+OK
+redis> MGET key1 key2 key3
+1) "value1"
+2) "value2"
+3) "value3"
+```
+
+### SET Options
+
+The SET command supports various options for conditional writes and expiration:
+
+```bash
+# Only set if key doesn't exist (NX)
+redis> SET mykey "value" NX
+OK
+redis> SET mykey "newvalue" NX
+(nil)
+
+# Only set if key exists (XX)
+redis> SET existingkey "value" XX
+OK
+
+# Set with expiration (seconds)
+redis> SET session:123 "data" EX 3600
+OK
+
+# Set with expiration (milliseconds)
+redis> SET token:xyz "abc" PX 60000
+OK
+
+# Get old value while setting new one
+redis> SET counter "100" GET
+"50"
+
+# Keep existing TTL
+redis> SET mykey "newvalue" KEEPTTL
+OK
+```
+
+### Atomic Counters
+
+```bash
+# Increment by 1
+redis> SET counter 100
+OK
+redis> INCR counter
+(integer) 101
+redis> INCRBY counter 5
+(integer) 106
+
+# Increment by float
+redis> INCRBYFLOAT price 0.05
+"10.55"
+
+# Decrement
+redis> DECR counter
+(integer) 105
+redis> DECRBY counter 10
+(integer) 95
+```
+
+### String Operations
+
+```bash
+# Append to string
+redis> SET msg "Hello"
+OK
+redis> APPEND msg " World"
+(integer) 11
+redis> GET msg
+"Hello World"
+
+# Get string length
+redis> STRLEN msg
+(integer) 11
+
+# Get substring
+redis> GETRANGE msg 0 4
+"Hello"
+
+# Set substring
+redis> SETRANGE msg 6 "Redis"
+(integer) 11
+redis> GET msg
+"Hello Redis"
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| GET | O(1) | Retrieve value |
+| SET | O(1) | Store value |
+| MGET | O(N) | N = number of keys |
+| MSET | O(N) | N = number of keys |
+| INCR/DECR | O(1) | Atomic increment |
+| APPEND | O(1) | Amortized |
+| GETRANGE | O(N) | N = length of substring |
+| STRLEN | O(1) | Get length |
+
+## Patterns and Examples
+
+### Caching with Expiration
+
+```bash
+# Cache API response for 1 hour
+redis> SET cache:user:123 "{\"name\":\"Alice\",\"email\":\"alice@example.com\"}" EX 3600
+OK
+
+# Check TTL
+redis> TTL cache:user:123
+(integer) 3599
+```
+
+### Distributed Lock
+
+```bash
+# Acquire lock (expires in 10 seconds)
+redis> SET lock:resource:123 "owner-uuid" NX EX 10
+OK
+
+# Try to acquire (fails if locked)
+redis> SET lock:resource:123 "another-owner" NX EX 10
+(nil)
+
+# Release lock
+redis> DEL lock:resource:123
+(integer) 1
+```
+
+<Warning>
+For production distributed locks, use the Redlock algorithm or consider Redis Streams for more robust locking.
+</Warning>
+
+### Rate Limiting
+
+```bash
+# Simple counter-based rate limiting
+redis> SET ratelimit:user:123 0 EX 60
+OK
+redis> INCR ratelimit:user:123
+(integer) 1
+redis> INCR ratelimit:user:123
+(integer) 2
+
+# Check if under limit
+redis> GET ratelimit:user:123
+"2"
+```
+
+### Page View Counter
+
+```bash
+# Increment page views atomically
+redis> INCR pageviews:post:456
+(integer) 1523
+
+# Get current count
+redis> GET pageviews:post:456
+"1523"
+```
+
+## Internal Encoding
+
+Redis optimizes string storage based on content:
+
+- **int**: Integers that fit in a long (8 bytes)
+- **embstr**: Strings up to 44 bytes (embedded in object)
+- **raw**: Longer strings stored separately
+
+```bash
+# Check encoding
+redis> SET num 12345
+OK
+redis> OBJECT ENCODING num
+"int"
+
+redis> SET short "Hello"
+OK
+redis> OBJECT ENCODING short
+"embstr"
+
+redis> SET long "This is a much longer string that will use raw encoding"
+OK
+redis> OBJECT ENCODING long
+"raw"
+```
+
+<Note>
+The `embstr` encoding is immutable and converted to `raw` on any modification.
+</Note>
+
+## Best Practices
+
+1. **Use MGET/MSET** for batch operations to reduce round trips
+2. **Set expiration times** for cache and temporary data
+3. **Use counters** instead of get-modify-set for concurrent updates
+4. **Avoid large values** - keep strings under 100KB for best performance
+5. **Use pipelining** when setting many keys
+
+<Tip>
+When storing JSON, consider using Redis JSON module for native querying, or serialize to strings for simple caching.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="String Commands" href="/commands/strings">
+    Complete command reference
+  </Card>
+  <Card title="Hashes" href="/data-types/hashes">
+    For structured objects
+  </Card>
+</CardGroup>

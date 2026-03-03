@@ -1,0 +1,495 @@
+---
+title: Go Client (go-redis)
+description: Connect to Redis from Go using go-redis, the official Go client
+---
+
+The official Go client for Redis is **go-redis**. It provides a type-safe, idiomatic Go API with full support for Redis commands, connection pooling, pub/sub, pipelining, transactions, and Redis modules.
+
+## Installation
+
+Install go-redis using Go modules:
+
+<CodeGroup>
+```bash go get
+go get github.com/redis/go-redis/v9
+```
+
+```go go.mod
+require github.com/redis/go-redis/v9 v9.0.0
+```
+</CodeGroup>
+
+<Tip>
+  go-redis v9 requires Go 1.18+ and uses the context package for all operations. If you're using an older Go version, use go-redis v8.
+</Tip>
+
+## Quick Start
+
+<Steps>
+  <Step title="Import and connect">
+    Create a connection to your Redis server:
+    
+    ```go
+    package main
+    
+    import (
+        "context"
+        "fmt"
+        "github.com/redis/go-redis/v9"
+    )
+    
+    var ctx = context.Background()
+    
+    func main() {
+        // Create Redis client
+        rdb := redis.NewClient(&redis.Options{
+            Addr:     "localhost:6379",
+            Password: "", // no password set
+            DB:       0,  // use default DB
+        })
+        
+        // Test the connection
+        pong, err := rdb.Ping(ctx).Result()
+        if err != nil {
+            panic(err)
+        }
+        fmt.Println("Connected to Redis:", pong)
+    }
+    ```
+  </Step>
+  
+  <Step title="Perform basic operations">
+    Execute Redis commands with context:
+    
+    ```go
+    // SET and GET operations
+    err := rdb.Set(ctx, "user:1:name", "Alice", 0).Err()
+    if err != nil {
+        panic(err)
+    }
+    
+    name, err := rdb.Get(ctx, "user:1:name").Result()
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println("Name:", name)  // Output: Name: Alice
+    
+    // Work with numbers
+    err = rdb.Set(ctx, "counter", 0, 0).Err()
+    if err != nil {
+        panic(err)
+    }
+    
+    rdb.Incr(ctx, "counter")
+    rdb.IncrBy(ctx, "counter", 5)
+    
+    count, err := rdb.Get(ctx, "counter").Int()
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println("Counter:", count)  // Output: Counter: 6
+    
+    // Expiration
+    err = rdb.Set(ctx, "session:abc", "session_data", time.Hour).Err()
+    if err != nil {
+        panic(err)
+    }
+    ```
+  </Step>
+  
+  <Step title="Handle errors">
+    Implement proper error handling:
+    
+    ```go
+    import (
+        "context"
+        "errors"
+        "fmt"
+        "time"
+        "github.com/redis/go-redis/v9"
+    )
+    
+    func main() {
+        ctx := context.Background()
+        
+        rdb := redis.NewClient(&redis.Options{
+            Addr:         "localhost:6379",
+            DialTimeout:  5 * time.Second,
+            ReadTimeout:  3 * time.Second,
+            WriteTimeout: 3 * time.Second,
+            PoolSize:     10,
+        })
+        defer rdb.Close()
+        
+        // Check if key exists
+        val, err := rdb.Get(ctx, "nonexistent").Result()
+        if err == redis.Nil {
+            fmt.Println("Key does not exist")
+        } else if err != nil {
+            fmt.Println("Error:", err)
+        } else {
+            fmt.Println("Value:", val)
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Connection Patterns
+
+### Basic Connection with Options
+
+```go
+rdb := redis.NewClient(&redis.Options{
+    Addr:         "localhost:6379",
+    Password:     "",
+    DB:           0,
+    PoolSize:     10,
+    MinIdleConns: 5,
+    MaxRetries:   3,
+    DialTimeout:  5 * time.Second,
+    ReadTimeout:  3 * time.Second,
+    WriteTimeout: 3 * time.Second,
+})
+```
+
+### Secure TLS Connection
+
+Connect to Redis with TLS encryption:
+
+```go
+import (
+    "crypto/tls"
+    "github.com/redis/go-redis/v9"
+)
+
+rdb := redis.NewClient(&redis.Options{
+    Addr:     "your-redis-host.com:6380",
+    Password: "your-password",
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+    },
+})
+```
+
+### Redis Cloud Connection
+
+Connect to Redis Cloud:
+
+```go
+rdb := redis.NewClient(&redis.Options{
+    Addr:     "your-endpoint.redis.cloud:12345",
+    Password: "your-password",
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+    },
+})
+```
+
+### Connection Pool Configuration
+
+```go
+rdb := redis.NewClient(&redis.Options{
+    Addr:         "localhost:6379",
+    PoolSize:     100,              // Maximum number of socket connections
+    MinIdleConns: 10,               // Minimum number of idle connections
+    MaxIdleTime:  5 * time.Minute,  // Close idle connections after this time
+    PoolTimeout:  4 * time.Second,  // Wait time when all connections are busy
+})
+```
+
+## Working with Data Structures
+
+### Hashes
+
+```go
+// Store user data as a hash
+err := rdb.HSet(ctx, "user:1", map[string]interface{}{
+    "name":  "Alice",
+    "email": "alice@example.com",
+    "age":   30,
+}).Err()
+if err != nil {
+    panic(err)
+}
+
+// Get specific field
+name, err := rdb.HGet(ctx, "user:1", "name").Result()
+if err != nil {
+    panic(err)
+}
+
+// Get all fields
+user, err := rdb.HGetAll(ctx, "user:1").Result()
+if err != nil {
+    panic(err)
+}
+fmt.Println(user)  // map[name:Alice email:alice@example.com age:30]
+
+// Increment numeric field
+rdb.HIncrBy(ctx, "user:1", "age", 1)
+```
+
+### Lists
+
+```go
+// Add items to a list
+err := rdb.RPush(ctx, "queue", "task1", "task2", "task3").Err()
+if err != nil {
+    panic(err)
+}
+
+// Get list length
+length, err := rdb.LLen(ctx, "queue").Result()
+
+// Pop item from list
+task, err := rdb.LPop(ctx, "queue").Result()
+fmt.Println(task)  // task1
+
+// Get range of items
+tasks, err := rdb.LRange(ctx, "queue", 0, -1).Result()
+```
+
+### Sets
+
+```go
+// Add members to a set
+err := rdb.SAdd(ctx, "tags", "python", "redis", "database").Err()
+if err != nil {
+    panic(err)
+}
+
+// Check membership
+isMember, err := rdb.SIsMember(ctx, "tags", "python").Result()
+fmt.Println(isMember)  // true
+
+// Get all members
+tags, err := rdb.SMembers(ctx, "tags").Result()
+
+// Set operations
+rdb.SAdd(ctx, "tags2", "redis", "cache", "nosql")
+common, err := rdb.SInter(ctx, "tags", "tags2").Result()
+fmt.Println(common)  // [redis]
+```
+
+### Sorted Sets
+
+```go
+// Add scored members
+err := rdb.ZAdd(ctx, "leaderboard", 
+    redis.Z{Score: 100, Member: "alice"},
+    redis.Z{Score: 150, Member: "bob"},
+    redis.Z{Score: 120, Member: "charlie"},
+).Err()
+if err != nil {
+    panic(err)
+}
+
+// Get top scores (descending)
+topPlayers, err := rdb.ZRevRangeWithScores(ctx, "leaderboard", 0, 2).Result()
+for _, player := range topPlayers {
+    fmt.Printf("%s: %.0f\n", player.Member, player.Score)
+}
+
+// Get rank
+rank, err := rdb.ZRevRank(ctx, "leaderboard", "alice").Result()
+fmt.Println(rank)  // 2 (0-indexed)
+
+// Increment score
+rdb.ZIncrBy(ctx, "leaderboard", 25, "alice")
+```
+
+## Advanced Features
+
+### Pipelining
+
+Batch multiple commands for better performance:
+
+```go
+pipe := rdb.Pipeline()
+
+pipe.Set(ctx, "key1", "value1", 0)
+pipe.Set(ctx, "key2", "value2", 0)
+pipe.Incr(ctx, "counter")
+getCmd := pipe.Get(ctx, "key1")
+
+// Execute all commands
+_, err := pipe.Exec(ctx)
+if err != nil {
+    panic(err)
+}
+
+// Get individual results
+fmt.Println(getCmd.Val())  // value1
+```
+
+### Transactions
+
+Execute commands atomically with WATCH:
+
+```go
+// Transaction with optimistic locking
+func transferFunds(ctx context.Context, rdb *redis.Client, fromKey, toKey string, amount int64) error {
+    txf := func(tx *redis.Tx) error {
+        // Get current balance
+        balance, err := tx.Get(ctx, fromKey).Int64()
+        if err != nil && err != redis.Nil {
+            return err
+        }
+        
+        if balance < amount {
+            return errors.New("insufficient balance")
+        }
+        
+        // Execute transaction
+        _, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+            pipe.DecrBy(ctx, fromKey, amount)
+            pipe.IncrBy(ctx, toKey, amount)
+            return nil
+        })
+        return err
+    }
+    
+    // Retry if the key was modified
+    return rdb.Watch(ctx, txf, fromKey)
+}
+```
+
+### Pub/Sub
+
+Implement publish/subscribe messaging:
+
+```go
+import (
+    "context"
+    "fmt"
+    "github.com/redis/go-redis/v9"
+)
+
+func subscriber(ctx context.Context) {
+    rdb := redis.NewClient(&redis.Options{
+        Addr: "localhost:6379",
+    })
+    
+    // Subscribe to a channel
+    pubsub := rdb.Subscribe(ctx, "notifications")
+    defer pubsub.Close()
+    
+    // Wait for subscription to be confirmed
+    _, err := pubsub.Receive(ctx)
+    if err != nil {
+        panic(err)
+    }
+    
+    // Receive messages
+    ch := pubsub.Channel()
+    for msg := range ch {
+        fmt.Printf("Received: %s from %s\n", msg.Payload, msg.Channel)
+    }
+}
+
+func publisher(ctx context.Context) {
+    rdb := redis.NewClient(&redis.Options{
+        Addr: "localhost:6379",
+    })
+    
+    err := rdb.Publish(ctx, "notifications", "Hello, Redis!").Err()
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+### Scan for Large Datasets
+
+Iterate through keys efficiently:
+
+```go
+iter := rdb.Scan(ctx, 0, "user:*", 100).Iterator()
+for iter.Next(ctx) {
+    key := iter.Val()
+    fmt.Println(key)
+    
+    // Process each key
+    value, err := rdb.Get(ctx, key).Result()
+    if err != nil {
+        continue
+    }
+    fmt.Println(value)
+}
+
+if err := iter.Err(); err != nil {
+    panic(err)
+}
+```
+
+## Context and Timeouts
+
+Use context for timeout control:
+
+```go
+import (
+    "context"
+    "time"
+)
+
+// Set operation timeout
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+err := rdb.Set(ctx, "key", "value", 0).Err()
+if err != nil {
+    if errors.Is(err, context.DeadlineExceeded) {
+        fmt.Println("Operation timed out")
+    } else {
+        fmt.Println("Error:", err)
+    }
+}
+```
+
+## Cluster Support
+
+Connect to Redis Cluster:
+
+```go
+import "github.com/redis/go-redis/v9"
+
+rdb := redis.NewClusterClient(&redis.ClusterOptions{
+    Addrs: []string{
+        "localhost:7000",
+        "localhost:7001",
+        "localhost:7002",
+    },
+    PoolSize: 10,
+})
+
+// Use the same API as single-node client
+err := rdb.Set(ctx, "key", "value", 0).Err()
+```
+
+## Starter Project
+
+<Card 
+  title="Redis Go Starter Project" 
+  icon="github" 
+  href="https://github.com/redis-developer/redis-starter-go"
+>
+  Clone the official starter project to get up and running quickly with complete examples and best practices.
+</Card>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="go-redis Documentation" icon="book" href="https://redis.io/docs/latest/develop/clients/go/">
+    Official go-redis documentation
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/redis/go-redis">
+    go-redis source code and examples
+  </Card>
+  <Card title="Redis Commands" icon="terminal" href="https://redis.io/commands/">
+    Complete Redis command reference
+  </Card>
+  <Card title="Data Types Guide" icon="database" href="https://redis.io/docs/latest/develop/data-types/">
+    Learn about Redis data structures
+  </Card>
+</CardGroup>

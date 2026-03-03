@@ -1,0 +1,627 @@
+---
+title: 'Vector Search'
+description: 'Semantic similarity search using vector embeddings for AI and machine learning applications'
+---
+
+Redis Vector Search enables semantic similarity search by storing and querying high-dimensional vector embeddings. This is essential for AI applications like recommendation systems, semantic search, image similarity, and retrieval augmented generation (RAG).
+
+## Overview
+
+Vector search in Redis provides:
+
+- **Semantic Similarity**: Find similar items based on meaning, not just keywords
+- **Multiple Algorithms**: k-NN with FLAT and HNSW indexes
+- **Vector Similarity Metrics**: Cosine, Euclidean (L2), and Inner Product
+- **Hybrid Search**: Combine vector similarity with filtering and full-text search
+- **High Performance**: Optimized for low-latency retrieval at scale
+
+<Warning>
+Vector search requires building Redis with modules enabled:
+
+```bash
+make BUILD_WITH_MODULES=yes
+```
+
+This feature is marked with an asterisk (*) in the README and is only available when compiled with module support.
+</Warning>
+
+## Use Cases
+
+### Semantic Search
+
+Find documents by meaning rather than exact keywords:
+
+```python
+# Query: "How to make pasta"
+# Matches: "Italian cooking recipes", "Homemade noodle guide"
+```
+
+### Recommendation Systems
+
+Find similar products, content, or users:
+
+```python
+# Given: User purchased "wireless headphones"
+# Recommend: "bluetooth speakers", "portable earbuds"
+```
+
+### Image Similarity
+
+Find visually similar images:
+
+```python
+# Given: Photo of a golden retriever
+# Returns: Other dog photos, similar breeds
+```
+
+### Retrieval Augmented Generation (RAG)
+
+Retrieve relevant context for LLM queries:
+
+```python
+# User question: "What's the refund policy?"
+# Retrieve: Most relevant documentation chunks
+# Pass to LLM: Generate answer using retrieved context
+```
+
+## Creating a Vector Index
+
+### Basic Vector Index
+
+```bash
+FT.CREATE idx:embeddings 
+  ON HASH 
+  PREFIX 1 doc: 
+  SCHEMA 
+    title TEXT 
+    content TEXT 
+    vector VECTOR FLAT 6 
+      TYPE FLOAT32 
+      DIM 384 
+      DISTANCE_METRIC COSINE
+```
+
+### Index Parameters
+
+| Parameter | Description | Options |
+|-----------|-------------|----------|
+| **TYPE** | Vector data type | `FLOAT32`, `FLOAT64` |
+| **DIM** | Vector dimensions | Must match embedding model (e.g., 384, 768, 1536) |
+| **DISTANCE_METRIC** | Similarity function | `COSINE`, `L2` (Euclidean), `IP` (Inner Product) |
+| **INITIAL_CAP** | Initial capacity | Number of vectors (optional) |
+
+## Vector Index Algorithms
+
+### FLAT (Brute Force)
+
+Exact nearest neighbor search - checks every vector.
+
+```bash
+FT.CREATE idx:vectors ON HASH PREFIX 1 vec: 
+  SCHEMA 
+    embedding VECTOR FLAT 6 
+      TYPE FLOAT32 
+      DIM 768 
+      DISTANCE_METRIC COSINE 
+      INITIAL_CAP 10000
+```
+
+**Pros:**
+- Perfect accuracy
+- Simple and reliable
+- Good for smaller datasets (under 100K vectors)
+
+**Cons:**
+- O(N) search complexity
+- Slower for large datasets
+
+### HNSW (Hierarchical Navigable Small World)
+
+Approximate nearest neighbor search using graph-based indexing.
+
+```bash
+FT.CREATE idx:vectors ON HASH PREFIX 1 vec: 
+  SCHEMA 
+    embedding VECTOR HNSW 10 
+      TYPE FLOAT32 
+      DIM 768 
+      DISTANCE_METRIC COSINE 
+      M 16 
+      EF_CONSTRUCTION 200 
+      EF_RUNTIME 10
+```
+
+**HNSW Parameters:**
+
+| Parameter | Description | Default | Tuning |
+|-----------|-------------|---------|--------|
+| **M** | Max connections per node | 16 | Higher = better recall, more memory |
+| **EF_CONSTRUCTION** | Construction time quality | 200 | Higher = better quality, slower build |
+| **EF_RUNTIME** | Search quality | 10 | Higher = better recall, slower search |
+
+**Pros:**
+- Very fast queries (sublinear)
+- Scales to millions of vectors
+- High recall with proper tuning
+
+**Cons:**
+- Approximate results
+- More memory usage
+- Slower indexing
+
+<Note>
+Use **FLAT** for exact search on smaller datasets (under 100K vectors). Use **HNSW** for fast approximate search on large datasets.
+</Note>
+
+## Storing Vectors
+
+### From Python with NumPy
+
+```python
+import redis
+import numpy as np
+
+r = redis.Redis()
+
+# Generate or load embeddings (example: 384 dimensions)
+embedding = np.random.rand(384).astype(np.float32)
+
+# Convert to bytes
+vector_bytes = embedding.tobytes()
+
+# Store document with vector
+r.hset(
+    "doc:1",
+    mapping={
+        "title": "Introduction to Redis",
+        "content": "Redis is an in-memory data store...",
+        "vector": vector_bytes
+    }
+)
+```
+
+### From Python with OpenAI Embeddings
+
+```python
+import redis
+import openai
+import numpy as np
+
+r = redis.Redis()
+client = openai.OpenAI()
+
+def embed_text(text: str) -> bytes:
+    """Generate embedding for text using OpenAI."""
+    response = client.embeddings.create(
+        model="text-embedding-3-small",  # 1536 dimensions
+        input=text
+    )
+    embedding = np.array(response.data[0].embedding, dtype=np.float32)
+    return embedding.tobytes()
+
+# Store document with embedding
+doc_text = "Redis vector search enables semantic similarity queries"
+r.hset(
+    "doc:100",
+    mapping={
+        "title": "Vector Search Guide",
+        "content": doc_text,
+        "category": "documentation",
+        "vector": embed_text(doc_text)
+    }
+)
+```
+
+## Searching Vectors
+
+### K-Nearest Neighbors Search
+
+```bash
+FT.SEARCH idx:embeddings 
+  "*=>[KNN 10 @vector $query_vector]" 
+  PARAMS 2 query_vector <binary_vector> 
+  RETURN 2 title __vector_score 
+  SORTBY __vector_score 
+  DIALECT 2
+```
+
+**Parameters:**
+- `KNN 10`: Return 10 nearest neighbors
+- `@vector`: Field name containing vectors
+- `$query_vector`: Query vector parameter
+- `__vector_score`: Distance/similarity score
+
+### Python Example
+
+```python
+import redis
+import numpy as np
+from redis.commands.search.query import Query
+
+r = redis.Redis(decode_responses=False)
+
+# Generate query embedding
+query_text = "How does Redis handle vector search?"
+query_vector = embed_text(query_text)  # Returns bytes
+
+# Search for 5 most similar documents
+q = Query(
+    "*=>[KNN 5 @vector $query_vector AS score]"
+).return_fields(
+    "title", "content", "score"
+).sort_by(
+    "score"
+).dialect(2)
+
+results = r.ft("idx:embeddings").search(
+    q,
+    query_params={"query_vector": query_vector}
+)
+
+# Process results
+for doc in results.docs:
+    print(f"Title: {doc.title}")
+    print(f"Score: {doc.score}")
+    print(f"Content: {doc.content[:100]}...\n")
+```
+
+## Hybrid Search
+
+Combine vector similarity with filtering and full-text search.
+
+### Filter by Category
+
+```python
+# Find similar documents in a specific category
+q = Query(
+    "@category:{documentation} => [KNN 5 @vector $query_vector]"
+).return_fields(
+    "title", "score"
+).sort_by(
+    "score"
+).dialect(2)
+```
+
+### Combine with Full-Text Search
+
+```python
+# Find similar documents mentioning "redis"
+q = Query(
+    "redis => [KNN 5 @vector $query_vector]"
+).return_fields(
+    "title", "content", "score"
+).sort_by(
+    "score"
+).dialect(2)
+```
+
+### Range Queries with Vectors
+
+```python
+# Find similar documents with score threshold
+q = Query(
+    "@category:{tutorial} => [KNN 10 @vector $query_vector AS score]" +
+    " @score:[0 0.5]"  # Only return if score < 0.5
+).return_fields(
+    "title", "score"
+).sort_by(
+    "score"
+).dialect(2)
+```
+
+## Distance Metrics
+
+### Cosine Similarity
+
+Measures angle between vectors (normalized).
+
+```bash
+DISTANCE_METRIC COSINE
+```
+
+- **Range**: 0 (identical) to 2 (opposite)
+- **Use**: Text embeddings, normalized data
+- **Properties**: Magnitude-independent
+
+### Euclidean Distance (L2)
+
+Measures straight-line distance.
+
+```bash
+DISTANCE_METRIC L2
+```
+
+- **Range**: 0 (identical) to ∞
+- **Use**: Image embeddings, spatial data
+- **Properties**: Magnitude-dependent
+
+### Inner Product (IP)
+
+Dot product of vectors.
+
+```bash
+DISTANCE_METRIC IP
+```
+
+- **Range**: -∞ to +∞ (higher = more similar)
+- **Use**: Recommendation systems
+- **Properties**: Not a true metric (no triangle inequality)
+
+<Note>
+For most text applications, **COSINE** is the recommended metric. It's invariant to vector magnitude and works well with embedding models.
+</Note>
+
+## Complete RAG Example
+
+Building a question-answering system:
+
+```python
+import redis
+import openai
+import numpy as np
+from redis.commands.search.field import VectorField, TextField, TagField
+from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+
+# Initialize
+r = redis.Redis(decode_responses=False)
+client = openai.OpenAI()
+
+# Create index
+schema = (
+    TextField("title"),
+    TextField("content"),
+    TagField("category"),
+    VectorField(
+        "vector",
+        "FLAT",
+        {
+            "TYPE": "FLOAT32",
+            "DIM": 1536,
+            "DISTANCE_METRIC": "COSINE"
+        }
+    )
+)
+
+r.ft("idx:docs").create_index(
+    schema,
+    definition=IndexDefinition(prefix=["doc:"], index_type=IndexType.HASH)
+)
+
+def embed(text: str) -> np.ndarray:
+    """Generate embedding using OpenAI."""
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return np.array(response.data[0].embedding, dtype=np.float32)
+
+# Index documents
+documents = [
+    {"title": "Redis Basics", "content": "Redis is an in-memory data store..."},
+    {"title": "Vector Search", "content": "Vector search enables semantic similarity..."},
+    {"title": "RAG with Redis", "content": "RAG combines retrieval and generation..."},
+]
+
+for i, doc in enumerate(documents):
+    vector = embed(doc["content"])
+    r.hset(
+        f"doc:{i}",
+        mapping={
+            "title": doc["title"],
+            "content": doc["content"],
+            "category": "documentation",
+            "vector": vector.tobytes()
+        }
+    )
+
+def ask_question(question: str, top_k: int = 3) -> str:
+    """Answer question using RAG."""
+    # 1. Retrieve relevant documents
+    query_vector = embed(question)
+    
+    q = Query(
+        f"*=>[KNN {top_k} @vector $query_vector AS score]"
+    ).return_fields(
+        "title", "content", "score"
+    ).sort_by("score").dialect(2)
+    
+    results = r.ft("idx:docs").search(
+        q,
+        query_params={"query_vector": query_vector.tobytes()}
+    )
+    
+    # 2. Build context from top results
+    context = "\n\n".join([
+        f"Title: {doc.title}\nContent: {doc.content}"
+        for doc in results.docs
+    ])
+    
+    # 3. Generate answer with LLM
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "Answer based on the provided context."},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
+        ]
+    )
+    
+    return response.choices[0].message.content
+
+# Use the RAG system
+answer = ask_question("How does vector search work?")
+print(answer)
+```
+
+## Performance Tuning
+
+### HNSW Tuning Guide
+
+<Steps>
+
+<Step title="Set M for connectivity">
+
+```bash
+M 16  # Default, good balance
+M 32  # Better recall, more memory
+M 8   # Less memory, lower recall
+```
+</Step>
+
+<Step title="Set EF_CONSTRUCTION for index quality">
+
+```bash
+EF_CONSTRUCTION 200  # Default
+EF_CONSTRUCTION 400  # Better quality, slower indexing
+EF_CONSTRUCTION 100  # Faster indexing, lower quality
+```
+</Step>
+
+<Step title="Set EF_RUNTIME for search quality">
+
+```bash
+EF_RUNTIME 10   # Fast queries, ~95% recall
+EF_RUNTIME 50   # Slower queries, ~98% recall
+EF_RUNTIME 100  # Even slower, ~99% recall
+```
+</Step>
+
+</Steps>
+
+### Memory Optimization
+
+1. **Use FLOAT32 instead of FLOAT64**: Half the memory, negligible accuracy loss
+2. **Set INITIAL_CAP**: Pre-allocate space if you know dataset size
+3. **Dimension reduction**: Use lower-dimensional embeddings when possible
+
+### Query Optimization
+
+1. **Limit K**: Only retrieve what you need (`KNN 10` not `KNN 100`)
+2. **Pre-filter**: Use tag/numeric filters to reduce search space
+3. **Batch queries**: Send multiple queries in pipeline
+
+## Monitoring and Debugging
+
+### Check Index Info
+
+```bash
+FT.INFO idx:embeddings
+```
+
+Shows:
+- Number of documents
+- Index size
+- Vector parameters
+- Memory usage
+
+### Explain Query Plan
+
+```bash
+FT.EXPLAIN idx:embeddings 
+  "@category:{docs} => [KNN 5 @vector $vec]" 
+  DIALECT 2
+```
+
+## Limitations
+
+<Warning>
+**Module Requirement**: Vector search is only available when Redis is built with `BUILD_WITH_MODULES=yes`.
+</Warning>
+
+- **Memory intensive**: Vectors and indexes are kept in memory
+- **Index updates**: Updates to indexed documents rebuild the vector entry
+- **HNSW is approximate**: May not return absolute nearest neighbors
+- **No clustering**: Vector indexes don't support Redis Cluster (yet)
+
+## Best Practices
+
+### 1. Choose the Right Dimensions
+
+```python
+# Common embedding dimensions
+text-embedding-3-small: 1536  # OpenAI
+sentence-transformers: 384     # all-MiniLM-L6-v2
+sentence-transformers: 768     # all-mpnet-base-v2
+```
+
+Lower dimensions = less memory, faster search, but may lose accuracy.
+
+### 2. Normalize Vectors for Cosine
+
+If using COSINE metric, normalize vectors to unit length:
+
+```python
+def normalize(vector: np.ndarray) -> np.ndarray:
+    return vector / np.linalg.norm(vector)
+
+vector = normalize(embedding)
+```
+
+### 3. Use Hybrid Search
+
+Combine vector search with filters for better results:
+
+```python
+# Better: Filter by category first
+q = Query(
+    "@category:{documentation} => [KNN 5 @vector $vec]"
+).dialect(2)
+```
+
+### 4. Monitor Recall
+
+For HNSW, periodically test recall against ground truth:
+
+```python
+# Compare HNSW results vs FLAT (exact) results
+recall = len(hnsw_results & flat_results) / len(flat_results)
+```
+
+## Integration with Embedding Models
+
+### Sentence Transformers
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def embed(text: str) -> bytes:
+    embedding = model.encode(text, convert_to_numpy=True).astype(np.float32)
+    return embedding.tobytes()
+```
+
+### Cohere
+
+```python
+import cohere
+
+co = cohere.Client(api_key="...")
+
+def embed(text: str) -> bytes:
+    response = co.embed(texts=[text], model="embed-english-v3.0")
+    embedding = np.array(response.embeddings[0], dtype=np.float32)
+    return embedding.tobytes()
+```
+
+### Hugging Face
+
+```python
+from transformers import AutoTokenizer, AutoModel
+import torch
+
+tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
+model = AutoModel.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
+
+def embed(text: str) -> bytes:
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    embedding = outputs.last_hidden_state.mean(dim=1).squeeze().numpy().astype(np.float32)
+    return embedding.tobytes()
+```
+
+## See Also
+
+- [Query Engine](/features/query-engine) - Full-text search and aggregations
+- [JSON](/features/json) - Native JSON document storage
+- [Time Series](/features/time-series) - Time-series data handling

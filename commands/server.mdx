@@ -1,0 +1,626 @@
+---
+title: "Server Commands"
+description: "Commands for Redis server management and administration"
+---
+
+Server commands provide control over Redis server operations, configuration, persistence, and monitoring.
+
+## INFO
+
+Returns information and statistics about the server.
+
+### Syntax
+
+```bash
+INFO [section [section ...]]
+```
+
+<ParamField path="section" type="string">
+  Specific section(s) to return. Omit for all sections. Available sections:
+  - `server`: General server information
+  - `clients`: Client connections
+  - `memory`: Memory usage
+  - `persistence`: RDB and AOF information
+  - `stats`: General statistics
+  - `replication`: Master/replica information
+  - `cpu`: CPU consumption
+  - `commandstats`: Command statistics
+  - `cluster`: Redis Cluster information
+  - `keyspace`: Database key statistics
+  - `modules`: Loaded modules
+  - `errorstats`: Error statistics
+</ParamField>
+
+<ResponseField name="info" type="string">
+  Server information in key:value format, organized by sections.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+**History:**
+- **7.0.0**: Added support for taking multiple section arguments.
+
+### Examples
+
+```bash
+redis> INFO server
+# Server
+redis_version:7.0.0
+redis_mode:standalone
+os:Linux 5.10.0 x86_64
+arch_bits:64
+tcp_port:6379
+uptime_in_seconds:3600
+
+redis> INFO memory
+# Memory
+used_memory:1024000
+used_memory_human:1000.00K
+used_memory_peak:2048000
+used_memory_peak_human:2.00M
+
+redis> INFO stats
+# Stats
+total_connections_received:100
+total_commands_processed:5000
+instantaneous_ops_per_sec:150
+```
+
+## CONFIG
+
+Manages Redis server configuration.
+
+### Syntax
+
+```bash
+CONFIG GET parameter
+CONFIG SET parameter value [parameter value ...]
+CONFIG REWRITE
+CONFIG RESETSTAT
+```
+
+<ParamField path="parameter" type="string" required>
+  Configuration parameter name. Supports glob patterns for CONFIG GET.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  Value to set for the parameter.
+</ParamField>
+
+<ResponseField name="result" type="array">
+  For GET: Array of parameter-value pairs.
+  For SET: `OK` on success.
+  For REWRITE: `OK` on success.
+  For RESETSTAT: `OK` on success.
+</ResponseField>
+
+**Time Complexity:** O(N) for CONFIG GET where N is the number of configuration parameters requested. O(1) for CONFIG SET.
+
+### Examples
+
+```bash
+redis> CONFIG GET maxmemory
+1) "maxmemory"
+2) "1073741824"
+
+redis> CONFIG GET max*
+1) "maxmemory"
+2) "1073741824"
+3) "maxclients"
+4) "10000"
+5) "maxmemory-policy"
+6) "noeviction"
+
+redis> CONFIG SET maxmemory 2147483648
+OK
+
+redis> CONFIG REWRITE
+OK
+
+redis> CONFIG RESETSTAT
+OK
+```
+
+## SAVE
+
+Synchronously saves the dataset to disk.
+
+### Syntax
+
+```bash
+SAVE
+```
+
+<ResponseField name="result" type="string">
+  `OK` on success.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the total number of keys in all databases.
+
+<Warning>
+SAVE blocks the server until the save is complete. For production use, prefer BGSAVE which saves in the background.
+</Warning>
+
+### Examples
+
+```bash
+redis> SAVE
+OK
+# Server is blocked during save operation
+```
+
+## SHUTDOWN
+
+Synchronously saves the dataset and shuts down the server.
+
+### Syntax
+
+```bash
+SHUTDOWN [NOSAVE | SAVE] [NOW] [FORCE] [ABORT]
+```
+
+<ParamField path="SAVE" type="option">
+  Force a DB saving operation even if no save points are configured.
+</ParamField>
+
+<ParamField path="NOSAVE" type="option">
+  Prevent DB saving operation even if save points are configured.
+</ParamField>
+
+<ParamField path="NOW" type="option">
+  Skip waiting for replicas to catch up.
+</ParamField>
+
+<ParamField path="FORCE" type="option">
+  Ignore errors during shutdown.
+</ParamField>
+
+<ParamField path="ABORT" type="option">
+  Cancel ongoing shutdown.
+</ParamField>
+
+<ResponseField name="result" type="none">
+  No response - server shuts down. Returns error if ABORT is used or shutdown fails.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the total number of keys when saving.
+
+### Examples
+
+```bash
+redis> SHUTDOWN SAVE
+# Server saves and shuts down
+
+redis> SHUTDOWN NOSAVE
+# Server shuts down without saving
+```
+
+## FLUSHDB
+
+Deletes all keys in the current database.
+
+### Syntax
+
+```bash
+FLUSHDB [ASYNC | SYNC]
+```
+
+<ParamField path="ASYNC" type="option">
+  Delete keys asynchronously in a background thread.
+</ParamField>
+
+<ParamField path="SYNC" type="option">
+  Delete keys synchronously (blocks server).
+</ParamField>
+
+<ResponseField name="result" type="string">
+  `OK` on success.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of keys in the database.
+
+### Examples
+
+```bash
+redis> SET key1 "value1"
+OK
+redis> SET key2 "value2"
+OK
+redis> FLUSHDB
+OK
+redis> DBSIZE
+(integer) 0
+
+redis> FLUSHDB ASYNC
+OK
+```
+
+## Related Commands
+
+### Additional Server Commands
+
+- **BGSAVE**: Background save
+- **LASTSAVE**: Get timestamp of last successful save
+- **BGREWRITEAOF**: Rewrite AOF file in background
+- **DBSIZE**: Get number of keys in current database
+- **FLUSHALL**: Delete all keys in all databases
+- **MEMORY**: Memory diagnostics
+- **SLOWLOG**: Slow query log
+- **MONITOR**: Monitor all commands in real-time
+- **CLIENT**: Manage client connections
+- **COMMAND**: Get command information
+- **TIME**: Get server time
+- **PING**: Test connection
+- **ECHO**: Echo message
+- **QUIT**: Close connection
+- **ROLE**: Get replication role
+- **REPLICAOF**: Set replication source
+- **SYNC**: Internal replication command
+- **PSYNC**: Partial resynchronization
+- **DEBUG**: Debugging utilities
+- **MODULE**: Manage Redis modules
+- **ACL**: Access control lists
+- **LATENCY**: Latency monitoring
+
+## Use Cases
+
+### Health Monitoring
+
+Check server health:
+
+```bash
+# Check if server is alive
+redis> PING
+PONG
+
+# Get server statistics
+redis> INFO stats
+# Stats
+total_connections_received:1000
+total_commands_processed:50000
+
+# Check memory usage
+redis> INFO memory
+# Memory
+used_memory:10485760
+used_memory_human:10.00M
+```
+
+### Performance Tuning
+
+Optimize configuration:
+
+```bash
+# Check current settings
+redis> CONFIG GET maxmemory-policy
+1) "maxmemory-policy"
+2) "noeviction"
+
+# Update for better performance
+redis> CONFIG SET maxmemory-policy allkeys-lru
+OK
+
+# Set memory limit
+redis> CONFIG SET maxmemory 2gb
+OK
+
+# Persist changes
+redis> CONFIG REWRITE
+OK
+```
+
+### Backup Operations
+
+Create database backups:
+
+```bash
+# Background save (non-blocking)
+redis> BGSAVE
+Background saving started
+
+# Check last save time
+redis> LASTSAVE
+(integer) 1640000000
+
+# Check if save is in progress
+redis> INFO persistence
+# Persistence
+rdb_bgsave_in_progress:0
+rdb_last_save_time:1640000000
+```
+
+### Client Management
+
+Manage connections:
+
+```bash
+# List connected clients
+redis> CLIENT LIST
+id=1 addr=127.0.0.1:52500 name= age=10 idle=0
+id=2 addr=127.0.0.1:52501 name=worker age=20 idle=5
+
+# Kill specific client
+redis> CLIENT KILL 127.0.0.1:52501
+OK
+
+# Set client name
+redis> CLIENT SETNAME myapp
+OK
+
+# Get client name
+redis> CLIENT GETNAME
+"myapp"
+```
+
+### Slow Query Analysis
+
+Identify slow commands:
+
+```bash
+# Get slow log entries
+redis> SLOWLOG GET 10
+1) 1) (integer) 14
+   2) (integer) 1640000000
+   3) (integer) 15000
+   4) 1) "GET"
+      2) "key"
+   5) "127.0.0.1:52500"
+   6) "client"
+
+# Get slow log length
+redis> SLOWLOG LEN
+(integer) 128
+
+# Reset slow log
+redis> SLOWLOG RESET
+OK
+```
+
+## Best Practices
+
+### Configuration Management
+
+1. Use CONFIG REWRITE to persist changes
+2. Test configuration changes in development
+3. Monitor memory usage after changes
+4. Document configuration decisions
+
+### Persistence Strategy
+
+<Tabs>
+  <Tab title="RDB (Snapshots)">
+    Point-in-time snapshots:
+    
+    ```bash
+    # Configure automatic saves
+    redis> CONFIG SET save "900 1 300 10 60 10000"
+    OK
+    
+    # Manual save
+    redis> BGSAVE
+    Background saving started
+    ```
+    
+    **Pros**: Compact, fast restarts
+    **Cons**: Data loss between saves
+  </Tab>
+  
+  <Tab title="AOF (Append Only)">
+    Log every write:
+    
+    ```bash
+    # Enable AOF
+    redis> CONFIG SET appendonly yes
+    OK
+    
+    # Set sync policy
+    redis> CONFIG SET appendfsync everysec
+    OK
+    
+    # Rewrite AOF
+    redis> BGREWRITEAOF
+    Background append only file rewriting started
+    ```
+    
+    **Pros**: More durable, minimal data loss
+    **Cons**: Larger files, slower restarts
+  </Tab>
+  
+  <Tab title="Hybrid">
+    Use both RDB and AOF:
+    
+    ```bash
+    redis> CONFIG SET save "900 1"
+    OK
+    redis> CONFIG SET appendonly yes
+    OK
+    ```
+    
+    **Pros**: Best durability, fast restarts
+    **Cons**: More disk I/O
+  </Tab>
+</Tabs>
+
+### Monitoring
+
+Regular health checks:
+
+```bash
+# Memory usage alert
+redis> INFO memory | grep used_memory_human
+
+# Command statistics
+redis> INFO commandstats
+# Commandstats
+cmdstat_get:calls=1000,usec=5000,usec_per_call=5.00
+cmdstat_set:calls=500,usec=3000,usec_per_call=6.00
+
+# Check for errors
+redis> INFO errorstats
+```
+
+## Patterns
+
+### Graceful Shutdown
+
+Shutdown with data preservation:
+
+```bash
+# Ensure data is saved
+redis> BGSAVE
+Background saving started
+
+# Wait for save to complete
+redis> INFO persistence | grep rdb_bgsave_in_progress
+
+# Shutdown gracefully
+redis> SHUTDOWN SAVE
+```
+
+### Configuration Rollback
+
+Revert configuration changes:
+
+```bash
+# Save original value
+redis> CONFIG GET maxmemory
+1) "maxmemory"
+2) "1073741824"
+
+# Make change
+redis> CONFIG SET maxmemory 2147483648
+OK
+
+# Test and rollback if needed
+redis> CONFIG SET maxmemory 1073741824
+OK
+```
+
+### Maintenance Mode
+
+Enter maintenance mode:
+
+```bash
+# Stop accepting writes
+redis> CONFIG SET min-replicas-to-write 1
+OK
+redis> CONFIG SET min-replicas-max-lag 0
+OK
+
+# Perform maintenance
+
+# Resume normal operation
+redis> CONFIG SET min-replicas-to-write 0
+OK
+```
+
+### Memory Pressure Response
+
+Handle memory pressure:
+
+```bash
+# Check memory usage
+redis> INFO memory
+
+# If near limit, enable eviction
+redis> CONFIG SET maxmemory-policy allkeys-lru
+OK
+
+# Or increase limit
+redis> CONFIG SET maxmemory 4gb
+OK
+```
+
+## Server Information
+
+Key INFO sections:
+
+### Server Section
+
+```bash
+redis> INFO server
+# Server
+redis_version:7.0.0
+redis_mode:standalone
+os:Linux 5.10.0 x86_64
+process_id:12345
+tcp_port:6379
+uptime_in_seconds:86400
+uptime_in_days:1
+```
+
+### Memory Section
+
+```bash
+redis> INFO memory
+# Memory
+used_memory:10485760
+used_memory_human:10.00M
+used_memory_peak:20971520
+used_memory_peak_human:20.00M
+mem_fragmentation_ratio:1.25
+```
+
+### Stats Section
+
+```bash
+redis> INFO stats
+# Stats
+total_connections_received:10000
+total_commands_processed:500000
+instantaneous_ops_per_sec:1000
+total_net_input_bytes:104857600
+total_net_output_bytes:209715200
+rejected_connections:0
+```
+
+### Replication Section
+
+```bash
+redis> INFO replication
+# Replication
+role:master
+connected_slaves:2
+slave0:ip=10.0.1.10,port=6379,state=online
+slave1:ip=10.0.1.11,port=6379,state=online
+```
+
+<Warning>
+FLUSHDB and FLUSHALL are destructive operations that delete all data. Always use with caution and consider using ASYNC option to avoid blocking.
+</Warning>
+
+## Command Statistics
+
+Analyze command usage:
+
+```bash
+redis> INFO commandstats
+# Commandstats
+cmdstat_get:calls=10000,usec=50000,usec_per_call=5.00
+cmdstat_set:calls=5000,usec=40000,usec_per_call=8.00
+cmdstat_del:calls=1000,usec=5000,usec_per_call=5.00
+
+# Reset statistics
+redis> CONFIG RESETSTAT
+OK
+```
+
+## Debugging
+
+Debug server issues:
+
+```bash
+# Monitor all commands
+redis> MONITOR
+OK
+1640000000.123456 [0 127.0.0.1:12345] "GET" "key"
+1640000000.123789 [0 127.0.0.1:12346] "SET" "key" "value"
+
+# Get server time
+redis> TIME
+1) "1640000000"
+2) "123456"
+
+# Check latency
+redis> LATENCY DOCTOR
+```

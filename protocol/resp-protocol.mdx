@@ -1,0 +1,219 @@
+---
+title: RESP Protocol Specification
+description: Complete specification of Redis Serialization Protocol (RESP)
+---
+
+The **REdis Serialization Protocol (RESP)** is the wire protocol that clients use to communicate with the Redis server. RESP is designed to be simple to implement, fast to parse, and human-readable.
+
+## Protocol Design Philosophy
+
+RESP was designed with the following goals:
+
+- Simple to implement in any programming language
+- Fast to parse without complex state machines
+- Human-readable for debugging with tools like `telnet` or `nc`
+- Support for multiple data types
+- Efficient binary-safe string transmission
+
+## RESP Data Types
+
+RESP defines several data type indicators, each represented by the first byte:
+
+### Simple Strings
+
+Simple strings are non-binary-safe strings that cannot contain `\r` or `\n` characters. They begin with `+` and end with `\r\n`.
+
+```
++OK\r\n
++PONG\r\n
+```
+
+**Implementation:** The parser searches for `\r` after the `+` prefix, extracts the string between them, and advances past the trailing `\r\n` (resp_parser.c:61-66).
+
+### Errors
+
+Errors are similar to simple strings but use `-` as the first byte. By convention, the error message starts with an error code in uppercase.
+
+```
+-ERR unknown command 'foobar'\r\n
+-WRONGTYPE Operation against a key holding the wrong kind of value\r\n
+```
+
+**Implementation:** Error parsing follows the same logic as simple strings, extracting the content between `-` and `\r\n` (resp_parser.c:69-74).
+
+<Tip>
+Client libraries should return errors as exceptions or error types rather than strings to help applications distinguish between error responses and string responses.
+</Tip>
+
+### Integers
+
+Integers are sent with `:` as the first byte, followed by the string representation of the number.
+
+```
+:0\r\n
+:1000\r\n
+:-1\r\n
+```
+
+**Implementation:** The parser converts the string representation to a `long long` value using `string2ll()` (resp_parser.c:77-84).
+
+### Bulk Strings
+
+Bulk strings are binary-safe and can contain any data. The format is `$<length>\r\n<data>\r\n`.
+
+```
+$5\r\nhello\r\n
+$0\r\n\r\n
+```
+
+The special value `$-1\r\n` represents a null bulk string:
+
+```
+$-1\r\n
+```
+
+**Implementation:** The parser first reads the length prefix, then reads exactly that many bytes of data, followed by `\r\n`. For null bulk strings (length = -1), a special null callback is invoked (resp_parser.c:42-58).
+
+### Arrays
+
+Arrays are composite types that can contain multiple elements of any RESP type. The format is `*<count>\r\n` followed by the elements.
+
+```
+*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n
+```
+
+Empty arrays:
+
+```
+*0\r\n
+```
+
+Null arrays (RESP2 only):
+
+```
+*-1\r\n
+```
+
+**Implementation:** Arrays use a recursive parsing approach. The parser reads the count, then invokes a callback that must call `parseReply()` recursively for each element (resp_parser.c:153-165).
+
+<Note>
+Null arrays are a RESP2 concept. In RESP3, use the null type `_\r\n` instead. The server maintains backward compatibility by sending `*-1\r\n` to RESP2 clients (networking.c:1210-1213).
+</Note>
+
+## Complete Protocol Example
+
+Here's a raw protocol communication example for the command `SET mykey myvalue`:
+
+**Client sends:**
+```
+*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n
+```
+
+Breaking it down:
+- `*3\r\n` - Array with 3 elements
+- `$3\r\nSET\r\n` - Bulk string "SET" (3 bytes)
+- `$5\r\nmykey\r\n` - Bulk string "mykey" (5 bytes)
+- `$7\r\nmyvalue\r\n` - Bulk string "myvalue" (7 bytes)
+
+**Server responds:**
+```
++OK\r\n
+```
+
+## RESP2 vs RESP3
+
+<Note>
+Redis supports both RESP2 and RESP3 protocols. By default, clients connect using RESP2. RESP3 introduces additional data types including maps, sets, booleans, doubles, big numbers, and push messages.
+</Note>
+
+### RESP3 Additional Types
+
+RESP3 adds several new types while maintaining backward compatibility:
+
+**Null:** `_\r\n` - Universal null type
+
+**Boolean:** `#t\r\n` (true) or `#f\r\n` (false)
+
+**Double:** `,<floating-point-number>\r\n`
+
+```
+,1.23\r\n
+,inf\r\n
+,-inf\r\n
+```
+
+**Big Number:** `(<big-number>\r\n`
+
+```
+(3492890328409238509324850943850943825024385\r\n
+```
+
+**Map:** `%<count>\r\n` followed by key-value pairs
+
+```
+%2\r\n+key1\r\n:1\r\n+key2\r\n:2\r\n
+```
+
+**Set:** `~<count>\r\n` followed by elements
+
+```
+~3\r\n+apple\r\n+banana\r\n+cherry\r\n
+```
+
+**Implementation:** All RESP3 types are handled by the parser with corresponding callbacks (resp_parser.c:192-205).
+
+### Protocol Version Selection
+
+Clients can select the protocol version using the `HELLO` command:
+
+```
+HELLO 3
+```
+
+The server stores the client's protocol version in the client structure (`c->resp` field, networking.c:147). This determines how the server formats responses.
+
+## Protocol Constants
+
+The implementation defines several important constants (server.h:188-193):
+
+- `PROTO_INLINE_MAX_SIZE` (64KB) - Maximum size for inline protocol requests
+- `PROTO_REPLY_CHUNK_BYTES` (16KB) - Default output buffer chunk size
+- `PROTO_IOBUF_LEN` (16KB) - Generic I/O buffer size
+- `PROTO_MBULK_BIG_ARG` (32KB) - Threshold for large multi-bulk arguments
+
+## Inline Commands
+
+For simplicity, Redis also supports an inline command format for simple use cases like `telnet`. Commands are sent as space-separated arguments followed by `\r\n`:
+
+```
+SET key value\r\n
+```
+
+The server detects the protocol type by examining the first byte. If it's `*`, RESP multi-bulk parsing is used; otherwise, inline parsing is used (networking.c:2942-3048).
+
+<Tip>
+Always use the RESP protocol format in production clients. Inline commands are primarily for manual testing and debugging.
+</Tip>
+
+## Error Handling
+
+Protocol errors result in the client being marked for disconnection. Common protocol errors include:
+
+- Invalid multi-bulk count
+- Missing `\r\n` terminators  
+- Bulk string length mismatches
+- Invalid type indicators
+
+When a protocol error is detected, the server logs the error and sets the `CLIENT_CLOSE_AFTER_REPLY` flag (networking.c:3054-3085).
+
+## Performance Optimizations
+
+The protocol implementation includes several optimizations:
+
+1. **Shared Objects:** Common responses like `:0\r\n`, `:1\r\n`, and small bulk/array headers are pre-allocated as shared objects (networking.c:1122-1133)
+
+2. **Direct Buffer Writes:** For simple responses, the server writes directly to the client's output buffer without allocation (networking.c:447-466)
+
+3. **Zero-Copy:** Large bulk strings can use reference counting to avoid copying data (networking.c:1230-1264)
+
+4. **Efficient Parsing:** The parser uses `strchr()` and `memchr()` for fast line scanning rather than byte-by-byte parsing

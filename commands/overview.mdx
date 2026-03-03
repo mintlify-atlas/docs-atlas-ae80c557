@@ -1,0 +1,206 @@
+---
+title: "Redis Commands Overview"
+description: "Complete guide to Redis command organization and categories"
+---
+
+Redis commands are organized into logical groups based on the data structures and operations they perform. This guide provides an overview of all command categories and how to navigate the Redis command reference.
+
+## Command Groups
+
+Redis organizes commands into the following groups:
+
+### Data Structure Commands
+
+<CardGroup cols={2}>
+  <Card title="String Commands" icon="text" href="/commands/strings">
+    GET, SET, INCR, DECR, APPEND - Work with string values
+  </Card>
+  
+  <Card title="List Commands" icon="list" href="/commands/lists">
+    LPUSH, RPUSH, LPOP, LRANGE - Manage ordered collections
+  </Card>
+  
+  <Card title="Set Commands" icon="circle" href="/commands/sets">
+    SADD, SMEMBERS, SINTER - Handle unique unordered collections
+  </Card>
+  
+  <Card title="Sorted Set Commands" icon="ranking-star" href="/commands/sorted-sets">
+    ZADD, ZRANGE, ZRANK - Manage sorted collections with scores
+  </Card>
+  
+  <Card title="Hash Commands" icon="hashtag" href="/commands/hashes">
+    HSET, HGET, HGETALL - Store field-value pairs
+  </Card>
+  
+  <Card title="Stream Commands" icon="water" href="/commands/streams">
+    XADD, XREAD, XGROUP - Process append-only logs
+  </Card>
+</CardGroup>
+
+### System Commands
+
+<CardGroup cols={2}>
+  <Card title="Generic Commands" icon="key" href="/commands/generic">
+    DEL, EXISTS, EXPIRE - Work with keys of any type
+  </Card>
+  
+  <Card title="Server Commands" icon="server" href="/commands/server">
+    INFO, CONFIG, SAVE - Manage server operations
+  </Card>
+  
+  <Card title="Pub/Sub Commands" icon="broadcast-tower" href="/commands/pubsub">
+    PUBLISH, SUBSCRIBE - Implement messaging patterns
+  </Card>
+  
+  <Card title="Cluster Commands" icon="network-wired" href="/commands/cluster">
+    CLUSTER NODES, CLUSTER SLOTS - Manage cluster topology
+  </Card>
+  
+  <Card title="Scripting Commands" icon="code" href="/commands/scripting">
+    EVAL, EVALSHA, SCRIPT LOAD - Execute Lua scripts
+  </Card>
+</CardGroup>
+
+## Command Properties
+
+Each Redis command has specific properties that affect its behavior:
+
+### Time Complexity
+
+All commands document their computational complexity using Big O notation:
+
+- **O(1)**: Constant time - operations like GET, SET
+- **O(N)**: Linear time - operations like DEL with multiple keys
+- **O(log N)**: Logarithmic time - operations on sorted sets like ZADD
+- **O(N*M)**: Combined complexity - operations like SINTER
+
+### Command Flags
+
+Commands are marked with flags indicating their characteristics:
+
+- **READONLY**: Does not modify data
+- **WRITE**: Modifies data
+- **FAST**: Executes in constant or logarithmic time
+- **DENYOOM**: Denied when memory is full
+- **STALE**: Can run on stale replicas
+
+### ACL Categories
+
+Commands belong to ACL categories for access control:
+
+- **KEYSPACE**: Key management operations
+- **STRING**: String data type operations
+- **LIST**: List data type operations
+- **SET**: Set data type operations
+- **SORTEDSET**: Sorted set operations
+- **HASH**: Hash data type operations
+- **STREAM**: Stream data type operations
+- **PUBSUB**: Publish/Subscribe operations
+- **SCRIPTING**: Lua scripting
+- **DANGEROUS**: Potentially dangerous operations
+
+## Command Naming Conventions
+
+Redis follows consistent naming patterns:
+
+### Prefix Patterns
+
+- **L/R**: Left/Right operations (LPUSH, RPUSH)
+- **B**: Blocking variants (BLPOP, BRPOP)
+- **P**: Pattern-based operations (PSUBSCRIBE)
+- **X**: Stream operations (XADD, XREAD)
+- **Z**: Sorted set operations (ZADD, ZRANGE)
+- **H**: Hash operations (HSET, HGET)
+- **S**: Set operations (SADD, SMEMBERS)
+
+### Suffix Patterns
+
+- **BY**: Sort or compare (SORT, ZRANGEBYSCORE)
+- **STORE**: Store result (SINTERSTORE)
+- **LEN**: Get length (STRLEN, LLEN)
+- **NX/XX**: Conditional operations (only if Not eXists / only if eXists)
+
+## Using the Command Reference
+
+Each command page includes:
+
+1. **Syntax**: Complete command syntax with all options
+2. **Parameters**: Detailed parameter descriptions
+3. **Return Value**: What the command returns
+4. **Time Complexity**: Performance characteristics
+5. **Examples**: Practical usage with redis-cli
+6. **History**: Version changes and new features
+
+## Quick Reference
+
+### Most Common Commands
+
+| Command | Group | Purpose |
+|---------|-------|----------|
+| GET | String | Retrieve string value |
+| SET | String | Store string value |
+| DEL | Generic | Delete keys |
+| EXISTS | Generic | Check key existence |
+| EXPIRE | Generic | Set key expiration |
+| LPUSH | List | Add to list head |
+| SADD | Set | Add to set |
+| ZADD | Sorted Set | Add to sorted set |
+| HSET | Hash | Set hash field |
+| XADD | Stream | Add stream entry |
+
+### Command History
+
+Redis commands evolve over versions. Key milestones:
+
+- **Redis 1.0.0**: Core data structures (strings, lists, sets)
+- **Redis 2.0.0**: Hashes, pub/sub
+- **Redis 2.6.0**: Lua scripting (EVAL)
+- **Redis 2.8.0**: Pattern scanning (SCAN)
+- **Redis 3.0.0**: Redis Cluster
+- **Redis 3.2.0**: GEO commands
+- **Redis 5.0.0**: Streams (XADD, XREAD)
+- **Redis 6.0.0**: ACL system
+- **Redis 7.0.0**: Redis Functions
+
+## Best Practices
+
+<Warning>
+Always check command time complexity before using in production. Commands like KEYS with O(N) complexity can block the server.
+</Warning>
+
+### Performance Tips
+
+1. **Use SCAN instead of KEYS** for production key iteration
+2. **Pipeline multiple commands** to reduce round trips
+3. **Avoid blocking commands** in high-throughput applications
+4. **Use appropriate data structures** for your use case
+5. **Set expiration times** to manage memory automatically
+
+### Security Considerations
+
+1. **Enable ACLs** to restrict command access
+2. **Avoid DANGEROUS category** commands in user-facing applications
+3. **Validate input** before passing to EVAL scripts
+4. **Use connection limits** to prevent resource exhaustion
+
+## Getting Help
+
+Redis provides built-in help:
+
+```bash
+redis-cli> COMMAND INFO GET
+redis-cli> COMMAND DOCS GET
+redis-cli> HELP @string
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Generic Commands" href="/commands/generic">
+    Learn key management operations
+  </Card>
+  
+  <Card title="String Commands" href="/commands/strings">
+    Master the most common data type
+  </Card>
+</CardGroup>

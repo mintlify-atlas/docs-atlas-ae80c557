@@ -1,0 +1,206 @@
+---
+title: 'Redis Architecture'
+description: 'Comprehensive overview of Redis server architecture and core components'
+---
+
+## Overview
+
+Redis is a high-performance in-memory data structure server designed around a single-threaded event loop with optional multi-threading for I/O operations. The architecture is built for speed, simplicity, and reliability.
+
+## Core Server Structure
+
+The Redis server is defined in `server.h` and centers around the `redisServer` struct, which maintains global state including:
+
+- **Event Loop**: Redis uses an event-driven architecture (`ae.h`) with a configurable frequency (default 10Hz, range 1-500Hz via `CONFIG_DEFAULT_HZ`)
+- **Client Connections**: Manages all client connections with a maximum of `MAX_CLIENTS_PER_CLOCK_TICK` (200) processed per cycle
+- **Databases**: Multiple logical databases (default 16) indexed by `dbid`
+- **Command Table**: All Redis commands with metadata, flags, and execution handlers
+
+```
+┌─────────────────────────────────────────┐
+│         Redis Server Process            │
+│                                         │
+│  ┌───────────────────────────────────┐  │
+│  │      Event Loop (ae.c)            │  │
+│  │  - File events (sockets)          │  │
+│  │  - Time events (cron tasks)       │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  ┌───────────────────────────────────┐  │
+│  │    In-Memory Data Structures      │  │
+│  │  - Keys (kvstore)                 │  │
+│  │  - Expires (estore)               │  │
+│  │  - Replication backlog            │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  ┌───────────────────────────────────┐  │
+│  │    Persistence Layer              │  │
+│  │  - RDB snapshots                  │  │
+│  │  - AOF append-only file           │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+```
+
+## Data Storage
+
+### Key-Value Store
+
+Redis uses a slot-based hash table implementation (`kvstore.h`) that partitions keys into slots for efficient cluster operations:
+
+- **Hash Slots**: 16,384 slots (defined as `CLUSTER_SLOTS` in `cluster.c:55`)
+- **Slot Calculation**: CRC16 hash of the key modulo 16,384
+- **Hash Tags**: Keys with `{...}` are hashed only on the tagged portion for multi-key operations
+
+### Object System
+
+Redis represents all values as `redisObject` structures with:
+
+- **Type**: String, list, set, sorted set, hash, stream, or module (`OBJ_STRING` through `OBJ_STREAM`)
+- **Encoding**: Internal representation optimization (e.g., integers, compressed strings)
+- **LRU/LFU**: 24 bits for eviction metadata
+- **Reference Counting**: Automatic memory management
+
+## Networking
+
+### Protocol
+
+Redis uses the RESP (REdis Serialization Protocol):
+
+- **Protocol Buffer**: `PROTO_IOBUF_LEN` (16KB) for I/O operations
+- **Reply Chunks**: `PROTO_REPLY_CHUNK_BYTES` (16KB) output buffer segments
+- **Inline Max**: `PROTO_INLINE_MAX_SIZE` (64KB) maximum inline request size
+
+### I/O Threading
+
+<Note>
+Redis 6.0+ supports multi-threaded I/O while keeping command execution single-threaded
+</Note>
+
+- **Main Thread**: Handles all command execution (`IOTHREAD_MAIN_THREAD_ID` = 0)
+- **I/O Threads**: Up to `IO_THREADS_MAX_NUM` (128) threads for reading/writing
+- **Thread Distribution**: Automatic based on pending clients when >= `IO_THREAD_MAX_PENDING_CLIENTS` (16)
+
+## Command Execution Pipeline
+
+1. **Connection Acceptance**: Event loop accepts new client connections
+2. **Request Parsing**: Parse RESP protocol from client buffer
+3. **Command Lookup**: Find command in command table
+4. **ACL Check**: Verify user permissions
+5. **Command Execution**: Single-threaded execution
+6. **Replication**: Propagate to replicas via replication buffer
+7. **Response**: Write to client output buffer
+
+<Warning>
+All command execution is single-threaded. I/O threading only handles reading requests and writing responses, not command processing.
+</Warning>
+
+## Time Management
+
+### LRU Clock
+
+```c
+// From evict.c
+unsigned int getLRUClock(void) {
+    return (mstime()/LRU_CLOCK_RESOLUTION) & LRU_CLOCK_MAX;
+}
+```
+
+- **Resolution**: `LRU_CLOCK_RESOLUTION` provides reduced precision time
+- **Usage**: Object idle time tracking for eviction policies
+- **Update**: Refreshed by server cron at configured Hz frequency
+
+## Module System
+
+Redis supports dynamic modules via `redismodule.h`:
+
+- **Module Types**: Custom data types with RDB serialization
+- **Commands**: Modules can register new commands
+- **Hooks**: Event notifications (loading, persistence, replication)
+- **Entity IDs**: 64-bit identifiers (54-bit signature + 10-bit encoding version)
+
+## Configuration
+
+### Static Configuration
+
+From `server.h`:
+
+```c
+#define CONFIG_DEFAULT_HZ 10          // Cron frequency
+#define CONFIG_MIN_HZ 1
+#define CONFIG_MAX_HZ 500
+#define NET_MAX_WRITES_PER_EVENT (1024*64)  // 64KB per event
+#define LOG_MAX_LEN 1024              // Max syslog message length
+```
+
+### Runtime Configuration
+
+Most settings can be modified at runtime via `CONFIG SET`:
+
+- Memory limits (`maxmemory`)
+- Eviction policies
+- Persistence settings
+- Replication parameters
+
+## Security
+
+### Protected Mode
+
+From `redis.conf:112`:
+
+```
+protected-mode yes
+```
+
+<Tip>
+Protected mode restricts connections to localhost when no password is set, preventing accidental exposure to the internet.
+</Tip>
+
+### ACL System
+
+Redis 6.0+ includes a comprehensive ACL system:
+
+- **User Management**: Multiple users with different permissions
+- **Command Filtering**: Fine-grained command access control
+- **Key Patterns**: Restrict access to specific key patterns
+- **Channel Patterns**: Pub/Sub channel access control
+
+## Performance Characteristics
+
+### Shared Objects
+
+Redis maintains shared objects for common values:
+
+- **Integers**: 0-9999 (`OBJ_SHARED_INTEGERS` = 10000)
+- **SELECT Commands**: Databases 0-9 (`PROTO_SHARED_SELECT_CMDS` = 10)
+- **Common Strings**: OK, ERR, etc.
+
+### Copy Avoidance
+
+For large strings with I/O threading:
+
+- **Minimum Size**: 16KB without I/O threads (`COPY_AVOID_MIN_STRING_SIZE`)
+- **With I/O Threads**: 64KB threshold (`COPY_AVOID_MIN_STRING_SIZE_THREADED`)
+- **Thread Requirement**: Minimum 7 I/O threads (`COPY_AVOID_MIN_IO_THREADS`)
+
+## Monitoring and Debugging
+
+### Latency Monitoring
+
+Redis includes built-in latency tracking:
+
+- **Histogram**: Per-command latency with 2 significant digits precision
+- **Range**: 1 nanosecond to 1 second
+- **Memory**: ~40KB per histogram
+
+### Statistics
+
+Server maintains metrics:
+
+- Commands executed
+- Network I/O bytes
+- Replication traffic
+- Event loop cycles and duration
+
+<Note>
+Access statistics via `INFO` command or the `LATENCY` command family for detailed latency analysis.
+</Note>

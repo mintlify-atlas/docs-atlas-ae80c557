@@ -1,0 +1,470 @@
+---
+title: "Set Commands"
+description: "Commands for working with Redis sets - unordered collections of unique strings"
+---
+
+Redis sets are unordered collections of unique strings. They provide fast membership testing and set operations like union, intersection, and difference.
+
+## SADD
+
+Adds one or more members to a set. Creates the key if it doesn't exist.
+
+### Syntax
+
+```bash
+SADD key member [member ...]
+```
+
+<ParamField path="key" type="key" required>
+  The set key. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="member" type="string" required>
+  One or more members to add to the set.
+</ParamField>
+
+<ResponseField name="count" type="integer">
+  The number of elements that were added to the set, not including elements already present.
+</ResponseField>
+
+**Time Complexity:** O(1) for each element added, so O(N) to add N elements.
+
+**History:**
+- **2.4.0**: Accepts multiple `member` arguments.
+
+### Examples
+
+```bash
+redis> SADD myset "Hello"
+(integer) 1
+redis> SADD myset "World"
+(integer) 1
+redis> SADD myset "World"
+(integer) 0
+redis> SMEMBERS myset
+1) "Hello"
+2) "World"
+redis> SADD myset "foo" "bar"
+(integer) 2
+```
+
+## SMEMBERS
+
+Returns all members of a set.
+
+### Syntax
+
+```bash
+SMEMBERS key
+```
+
+<ParamField path="key" type="key" required>
+  The set key.
+</ParamField>
+
+<ResponseField name="members" type="array">
+  All members of the set, in no particular order.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the set cardinality.
+
+<Warning>
+SMEMBERS loads all members into memory. For large sets, use SSCAN to iterate incrementally.
+</Warning>
+
+### Examples
+
+```bash
+redis> SADD myset "Hello"
+(integer) 1
+redis> SADD myset "World"
+(integer) 1
+redis> SMEMBERS myset
+1) "Hello"
+2) "World"
+```
+
+## SINTER
+
+Returns the intersection of multiple sets.
+
+### Syntax
+
+```bash
+SINTER key [key ...]
+```
+
+<ParamField path="key" type="key" required>
+  One or more set keys to intersect.
+</ParamField>
+
+<ResponseField name="members" type="array">
+  Members present in all specified sets.
+</ResponseField>
+
+**Time Complexity:** O(N*M) where N is the cardinality of the smallest set and M is the number of sets.
+
+### Examples
+
+```bash
+redis> SADD set1 "a" "b" "c"
+(integer) 3
+redis> SADD set2 "c" "d" "e"
+(integer) 3
+redis> SINTER set1 set2
+1) "c"
+redis> SADD set3 "c" "e" "f"
+(integer) 3
+redis> SINTER set1 set2 set3
+1) "c"
+```
+
+## SUNION
+
+Returns the union of multiple sets.
+
+### Syntax
+
+```bash
+SUNION key [key ...]
+```
+
+<ParamField path="key" type="key" required>
+  One or more set keys to union.
+</ParamField>
+
+<ResponseField name="members" type="array">
+  Members present in any of the specified sets.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the total number of elements in all sets.
+
+### Examples
+
+```bash
+redis> SADD set1 "a" "b" "c"
+(integer) 3
+redis> SADD set2 "c" "d" "e"
+(integer) 3
+redis> SUNION set1 set2
+1) "a"
+2) "b"
+3) "c"
+4) "d"
+5) "e"
+```
+
+## SDIFF
+
+Returns the difference between sets.
+
+### Syntax
+
+```bash
+SDIFF key [key ...]
+```
+
+<ParamField path="key" type="key" required>
+  First key is the set to subtract from. Following keys are sets to subtract.
+</ParamField>
+
+<ResponseField name="members" type="array">
+  Members of the first set that don't exist in any of the other sets.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the total number of elements in all sets.
+
+### Examples
+
+```bash
+redis> SADD set1 "a" "b" "c"
+(integer) 3
+redis> SADD set2 "c" "d" "e"
+(integer) 3
+redis> SDIFF set1 set2
+1) "a"
+2) "b"
+redis> SDIFF set2 set1
+1) "d"
+2) "e"
+```
+
+## Related Commands
+
+### Additional Set Commands
+
+- **SREM**: Remove members from set
+- **SCARD**: Get set cardinality (size)
+- **SISMEMBER**: Check if member exists
+- **SMISMEMBER**: Check multiple members
+- **SPOP**: Remove and return random member(s)
+- **SRANDMEMBER**: Get random member(s) without removing
+- **SMOVE**: Move member between sets
+- **SSCAN**: Iterate set members
+- **SINTERSTORE**: Store intersection result
+- **SUNIONSTORE**: Store union result
+- **SDIFFSTORE**: Store difference result
+- **SINTERCARD**: Get intersection cardinality
+
+## Use Cases
+
+### Tagging System
+
+Implement tags for articles:
+
+```bash
+# Add tags to article
+redis> SADD article:1000:tags "redis" "database" "nosql"
+(integer) 3
+redis> SADD article:1001:tags "redis" "performance"
+(integer) 2
+
+# Find articles tagged with "redis"
+redis> SADD tag:redis:articles "1000" "1001"
+(integer) 2
+
+# Find common tags between articles
+redis> SINTER article:1000:tags article:1001:tags
+1) "redis"
+```
+
+### Unique Visitors
+
+Track unique visitors:
+
+```bash
+redis> SADD visitors:2024-03-03 "user:1" "user:2" "user:3"
+(integer) 3
+redis> SADD visitors:2024-03-03 "user:1"
+(integer) 0
+redis> SCARD visitors:2024-03-03
+(integer) 3
+```
+
+### Friend Recommendations
+
+Find mutual friends:
+
+```bash
+redis> SADD friends:alice "bob" "charlie" "dave"
+(integer) 3
+redis> SADD friends:bob "alice" "charlie" "eve"
+(integer) 3
+
+# Find mutual friends
+redis> SINTER friends:alice friends:bob
+1) "charlie"
+
+# Find potential friends (friends of friends)
+redis> SDIFF friends:bob friends:alice
+1) "eve"
+```
+
+### Access Control
+
+Manage user permissions:
+
+```bash
+redis> SADD user:1000:permissions "read" "write" "delete"
+(integer) 3
+redis> SISMEMBER user:1000:permissions "write"
+(integer) 1
+redis> SISMEMBER user:1000:permissions "admin"
+(integer) 0
+```
+
+### Online Users
+
+Track currently online users:
+
+```bash
+# User logs in
+redis> SADD online:users "user:1000"
+(integer) 1
+
+# User logs out
+redis> SREM online:users "user:1000"
+(integer) 1
+
+# Count online users
+redis> SCARD online:users
+(integer) 0
+```
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Membership Testing**: SISMEMBER is O(1) - very fast
+2. **Set Operations**: SINTER can be expensive on large sets
+3. **Iteration**: Use SSCAN for large sets instead of SMEMBERS
+4. **Cardinality**: SCARD is O(1) - always use instead of counting SMEMBERS
+
+### Memory Optimization
+
+1. Use integer encoding when possible (more efficient)
+2. Avoid very large sets (consider splitting)
+3. Use expiration for temporary sets
+4. Store results of expensive operations with SINTERSTORE
+
+### Set Operations Strategy
+
+<Tabs>
+  <Tab title="Intersection">
+    Find common elements:
+    
+    ```bash
+    # Direct operation
+    redis> SINTER set1 set2 set3
+    1) "common"
+    
+    # Store result for reuse
+    redis> SINTERSTORE result set1 set2 set3
+    (integer) 1
+    ```
+  </Tab>
+  
+  <Tab title="Union">
+    Combine all elements:
+    
+    ```bash
+    # Direct operation
+    redis> SUNION set1 set2 set3
+    1) "a"
+    2) "b"
+    3) "c"
+    
+    # Store result
+    redis> SUNIONSTORE result set1 set2 set3
+    (integer) 3
+    ```
+  </Tab>
+  
+  <Tab title="Difference">
+    Find unique elements:
+    
+    ```bash
+    # Elements in set1 but not in set2
+    redis> SDIFF set1 set2
+    1) "unique"
+    
+    # Store result
+    redis> SDIFFSTORE result set1 set2
+    (integer) 1
+    ```
+  </Tab>
+</Tabs>
+
+## Patterns
+
+### Bloom Filter Alternative
+
+Simple membership testing:
+
+```bash
+redis> SADD seen:urls "https://example.com"
+(integer) 1
+redis> SISMEMBER seen:urls "https://example.com"
+(integer) 1
+redis> SISMEMBER seen:urls "https://other.com"
+(integer) 0
+```
+
+### Vote System
+
+Implement upvote/downvote:
+
+```bash
+# User upvotes post
+redis> SADD post:100:upvotes "user:1000"
+(integer) 1
+redis> SREM post:100:downvotes "user:1000"
+(integer) 0
+
+# Count votes
+redis> SCARD post:100:upvotes
+(integer) 1
+
+# Check if user voted
+redis> SISMEMBER post:100:upvotes "user:1000"
+(integer) 1
+```
+
+### Random Selection
+
+Select random items:
+
+```bash
+redis> SADD lottery "ticket1" "ticket2" "ticket3" "ticket4" "ticket5"
+(integer) 5
+redis> SPOP lottery 3
+1) "ticket3"
+2) "ticket1"
+3) "ticket5"
+redis> SMEMBERS lottery
+1) "ticket2"
+2) "ticket4"
+```
+
+### Game Matchmaking
+
+Find players with similar skills:
+
+```bash
+redis> SADD skill:beginner "player1" "player2" "player3"
+(integer) 3
+redis> SADD skill:intermediate "player4" "player5"
+(integer) 2
+redis> SADD queue:waiting "player1" "player4"
+(integer) 2
+
+# Find beginner in queue
+redis> SINTER skill:beginner queue:waiting
+1) "player1"
+```
+
+## Set vs Other Data Structures
+
+| Feature | Set | List | Sorted Set |
+|---------|-----|------|------------|
+| Duplicates | No | Yes | No |
+| Order | Unordered | Ordered | Score-ordered |
+| Membership | O(1) | O(N) | O(log N) |
+| Use Case | Unique items | Sequences | Rankings |
+| Set Ops | Yes | No | Limited |
+
+## Common Patterns
+
+### Real-Time Analytics
+
+```bash
+# Track unique events
+redis> SADD analytics:pageviews:2024-03-03 "session:1" "session:2"
+(integer) 2
+redis> SCARD analytics:pageviews:2024-03-03
+(integer) 2
+
+# Daily active users
+redis> SADD dau:2024-03-03 "user:1" "user:2" "user:3"
+(integer) 3
+redis> SCARD dau:2024-03-03
+(integer) 3
+```
+
+### Social Graph
+
+```bash
+# Follow relationship
+redis> SADD following:alice "bob" "charlie"
+(integer) 2
+redis> SADD followers:bob "alice" "dave"
+(integer) 2
+
+# Mutual follows
+redis> SINTER following:alice followers:alice
+(empty array)
+```
+
+<Warning>
+For large-scale social graphs, consider using a dedicated graph database alongside Redis.
+</Warning>

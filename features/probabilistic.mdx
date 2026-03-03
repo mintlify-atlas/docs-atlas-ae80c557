@@ -1,0 +1,663 @@
+---
+title: 'Probabilistic Data Structures'
+description: 'Space-efficient probabilistic data structures: Bloom filters, Cuckoo filters, t-digest, Top-K, and Count-Min Sketch'
+---
+
+Redis probabilistic data structures provide memory-efficient solutions for approximate data analysis. These structures trade perfect accuracy for massive space savings, making them ideal for high-scale applications where exact precision isn't critical.
+
+## Overview
+
+Redis provides these probabilistic data structures:
+
+- **Bloom Filter**: Test set membership ("is X in the set?")
+- **Cuckoo Filter**: Like Bloom but supports deletion
+- **t-digest**: Estimate percentiles and quantiles
+- **Top-K**: Track most frequent items
+- **Count-Min Sketch**: Estimate item frequencies
+
+<Warning>
+Probabilistic data structures require building Redis with modules enabled:
+
+```bash
+make BUILD_WITH_MODULES=yes
+```
+
+These features are marked with asterisks (*) in the README and are only available when compiled with module support.
+</Warning>
+
+## Bloom Filters
+
+Bloom filters test whether an element is a member of a set with a tunable false positive rate.
+
+### Guarantees
+
+✅ **No false negatives**: If Bloom filter says "not in set", it's definitely not in set  
+❌ **Possible false positives**: If it says "in set", it might not actually be (configurable probability)
+
+### Use Cases
+
+- **Username/email uniqueness check**: Quickly reject taken usernames before checking database
+- **Duplicate detection**: Check if content was already processed
+- **Ad placement**: Prevent showing the same ad repeatedly
+- **Cache filtering**: Avoid cache lookups for items that definitely don't exist
+
+### Creating a Bloom Filter
+
+```bash
+# Create with expected items and false positive rate
+BF.RESERVE usernames 1000000 0.01
+```
+
+**Parameters:**
+- `1000000`: Expected number of items
+- `0.01`: False positive rate (1%)
+
+### Adding Items
+
+```bash
+# Add single item
+BF.ADD usernames "alice"
+# Returns: 1 (new item) or 0 (may already exist)
+
+# Add multiple items
+BF.MADD usernames "bob" "charlie" "diana"
+# Returns: [1, 1, 1]
+```
+
+### Checking Membership
+
+```bash
+# Check single item
+BF.EXISTS usernames "alice"
+# Returns: 1 (probably exists) or 0 (definitely doesn't exist)
+
+# Check multiple items
+BF.MEXISTS usernames "alice" "eve" "frank"
+# Returns: [1, 0, 0]
+```
+
+### Example: Username Availability
+
+```python
+import redis
+
+r = redis.Redis(decode_responses=True)
+
+# Create Bloom filter for taken usernames
+r.bf().reserve("usernames", 1000000, 0.01)
+
+def is_username_available(username: str) -> bool:
+    """
+    Check if username is available.
+    Fast pre-check before hitting database.
+    """
+    # Check Bloom filter first
+    if r.bf().exists("usernames", username):
+        # Might be taken (could be false positive)
+        # Check database for confirmation
+        return not check_database(username)  # Your DB check
+    else:
+        # Definitely available (no false negatives)
+        return True
+
+def register_username(username: str):
+    """Register new username."""
+    if is_username_available(username):
+        # Add to database
+        save_to_database(username)  # Your DB save
+        # Add to Bloom filter
+        r.bf().add("usernames", username)
+        return True
+    return False
+```
+
+### Bloom Filter Info
+
+```bash
+BF.INFO usernames
+```
+
+Returns:
+- Capacity
+- Size (memory used)
+- Number of filters
+- Number of items
+- Expansion rate
+
+## Cuckoo Filters
+
+Cuckoo filters are similar to Bloom filters but support deletion and may have better space efficiency.
+
+### Bloom vs Cuckoo
+
+| Feature | Bloom Filter | Cuckoo Filter |
+|---------|--------------|---------------|
+| **False positives** | Yes | Yes |
+| **False negatives** | No | No |
+| **Deletion** | No | Yes (limited) |
+| **Space efficiency** | Very good | Good |
+| **Use case** | Append-only sets | Sets with deletions |
+
+### Creating a Cuckoo Filter
+
+```bash
+# Create with capacity
+CF.RESERVE coupons 10000
+
+# With custom bucket size and expansion
+CF.RESERVE coupons 10000 BUCKETSIZE 2 EXPANSION 1
+```
+
+### Adding Items
+
+```bash
+# Add item
+CF.ADD coupons "SUMMER2024"
+# Returns: 1 (added) or 0 (may already exist)
+
+# Add if not exists
+CF.ADDNX coupons "WINTER2024"
+# Returns: 1 (added) or 0 (already exists)
+```
+
+### Checking and Deleting
+
+```bash
+# Check existence
+CF.EXISTS coupons "SUMMER2024"
+# Returns: 1 (probably exists) or 0 (definitely doesn't)
+
+# Delete item
+CF.DEL coupons "SUMMER2024"
+# Returns: 1 (deleted) or 0 (not found)
+```
+
+<Warning>
+Cuckoo filter deletion is probabilistic. Deleting an item that was never added may cause a false negative for another item.
+</Warning>
+
+### Example: Coupon Code Validation
+
+```python
+import redis
+
+r = redis.Redis(decode_responses=True)
+
+# Create Cuckoo filter for active coupons
+r.cf().reserve("active_coupons", 100000)
+
+def activate_coupon(code: str):
+    """Add coupon to active set."""
+    r.cf().add("active_coupons", code)
+    # Also store in database with details
+
+def is_coupon_valid(code: str) -> bool:
+    """Quick validation check."""
+    if not r.cf().exists("active_coupons", code):
+        # Definitely invalid
+        return False
+    # Probably valid - verify with database
+    return verify_in_database(code)
+
+def redeem_coupon(code: str):
+    """Redeem and deactivate coupon."""
+    if is_coupon_valid(code):
+        # Mark as used in database
+        mark_used_in_database(code)
+        # Remove from active set
+        r.cf().delete("active_coupons", code)
+        return True
+    return False
+```
+
+## t-digest
+
+t-digest estimates percentiles and quantiles from streaming data with high accuracy at the extremes.
+
+### Use Cases
+
+- **Latency monitoring**: Track P50, P95, P99 response times
+- **SLA tracking**: Monitor performance percentiles
+- **Anomaly detection**: Identify outliers based on percentiles
+- **Resource monitoring**: Track CPU, memory percentiles
+
+### Creating a t-digest
+
+```bash
+# Create with default compression
+TDIGEST.CREATE response_times
+
+# With custom compression (higher = more accurate, more memory)
+TDIGEST.CREATE response_times COMPRESSION 200
+```
+
+### Adding Values
+
+```bash
+# Add single value
+TDIGEST.ADD response_times 23.5
+
+# Add multiple values
+TDIGEST.ADD response_times 12.3 45.6 78.9 23.1
+```
+
+### Querying Percentiles
+
+```bash
+# Get percentile value (P95)
+TDIGEST.QUANTILE response_times 0.95
+# Returns: 78.5 (95% of values are below this)
+
+# Get multiple percentiles
+TDIGEST.QUANTILE response_times 0.50 0.95 0.99
+# Returns: [23.1, 78.5, 89.2] (P50, P95, P99)
+
+# Get CDF (what percentile is this value?)
+TDIGEST.CDF response_times 50.0
+# Returns: 0.75 (50ms is at 75th percentile)
+```
+
+### Example: API Latency Monitoring
+
+```python
+import redis
+import time
+
+r = redis.Redis(decode_responses=True)
+
+# Create t-digest for latency tracking
+r.execute_command("TDIGEST.CREATE", "api_latency", "COMPRESSION", 200)
+
+def track_request(endpoint: str):
+    """Track API request latency."""
+    start = time.time()
+    
+    # Make request
+    response = make_api_request(endpoint)
+    
+    # Calculate latency in milliseconds
+    latency_ms = (time.time() - start) * 1000
+    
+    # Add to t-digest
+    r.execute_command("TDIGEST.ADD", "api_latency", latency_ms)
+    
+    return response
+
+def get_latency_stats():
+    """Get latency percentiles."""
+    percentiles = r.execute_command(
+        "TDIGEST.QUANTILE", "api_latency",
+        0.50, 0.75, 0.95, 0.99
+    )
+    
+    return {
+        "p50": f"{percentiles[0]:.2f}ms",
+        "p75": f"{percentiles[1]:.2f}ms",
+        "p95": f"{percentiles[2]:.2f}ms",
+        "p99": f"{percentiles[3]:.2f}ms"
+    }
+
+# Usage
+for _ in range(1000):
+    track_request("/api/users")
+
+print(get_latency_stats())
+# Output: {'p50': '23.45ms', 'p75': '45.67ms', 'p95': '89.12ms', 'p99': '123.45ms'}
+```
+
+### Merging t-digests
+
+```bash
+# Merge multiple t-digests
+TDIGEST.MERGE dest_key source1 source2 source3
+```
+
+Useful for combining metrics from multiple servers.
+
+## Top-K
+
+Top-K tracks the K most frequent items in a stream.
+
+### Use Cases
+
+- **Trending topics**: Track most mentioned hashtags
+- **Popular products**: Find best-selling items
+- **Frequent errors**: Identify most common error codes
+- **Hot pages**: Track most visited URLs
+
+### Creating Top-K
+
+```bash
+# Track top 10 items
+TOPK.RESERVE trending 10 2000 7 0.925
+```
+
+**Parameters:**
+- `10`: Number of top items to track (K)
+- `2000`: Width (more = accurate, more memory)
+- `7`: Depth (hash functions)
+- `0.925`: Decay (0-1, lower = faster decay)
+
+**Simple creation:**
+```bash
+TOPK.RESERVE trending 10  # Use defaults
+```
+
+### Adding Items
+
+```bash
+# Add single item
+TOPK.ADD trending "redis"
+
+# Add multiple items
+TOPK.ADD trending "python" "javascript" "go" "rust"
+```
+
+### Querying Top-K
+
+```bash
+# Get top K items
+TOPK.LIST trending
+# Returns: ["redis", "python", "javascript", ...] (most frequent first)
+
+# Get top K with counts
+TOPK.LIST trending WITHCOUNT
+# Returns: ["redis", 1523, "python", 1234, ...]
+
+# Check if item is in top K
+TOPK.QUERY trending "redis" "cobol"
+# Returns: [1, 0] (redis is in top K, cobol is not)
+
+# Get item count
+TOPK.COUNT trending "redis" "python"
+# Returns: [1523, 1234]
+```
+
+### Example: Trending Hashtags
+
+```python
+import redis
+
+r = redis.Redis(decode_responses=True)
+
+# Track top 20 hashtags
+r.execute_command("TOPK.RESERVE", "trending_hashtags", 20)
+
+def process_tweet(tweet: str):
+    """Extract and track hashtags."""
+    hashtags = [word for word in tweet.split() if word.startswith('#')]
+    
+    if hashtags:
+        # Add all hashtags
+        r.execute_command("TOPK.ADD", "trending_hashtags", *hashtags)
+
+def get_trending(limit: int = 10):
+    """Get top trending hashtags."""
+    result = r.execute_command(
+        "TOPK.LIST", "trending_hashtags", "WITHCOUNT"
+    )
+    
+    # Parse results (alternating items and counts)
+    trending = []
+    for i in range(0, min(limit * 2, len(result)), 2):
+        trending.append({
+            "hashtag": result[i],
+            "count": result[i + 1]
+        })
+    
+    return trending
+
+# Usage
+process_tweet("Loving #redis for #caching and #realtime apps!")
+process_tweet("#redis #performance is incredible for #timeseries data")
+
+print(get_trending(5))
+# Output: [{'hashtag': '#redis', 'count': 2}, {'hashtag': '#caching', 'count': 1}, ...]
+```
+
+## Count-Min Sketch
+
+Count-Min Sketch estimates frequencies of items in a stream with bounded error.
+
+### Use Cases
+
+- **Sales volume tracking**: Estimate units sold per product
+- **Request counting**: Track API endpoint hit counts
+- **Word frequency**: Count word occurrences in text streams
+- **Network traffic**: Estimate packet counts per IP
+
+### Creating Count-Min Sketch
+
+```bash
+# Create with width and depth
+CMS.INITBYPROB sales_volume 0.001 0.01
+```
+
+**Parameters:**
+- `0.001`: Error rate (0.1%)
+- `0.01`: Probability of error (1%)
+
+**Or specify dimensions directly:**
+```bash
+CMS.INITBYDIM sales_volume 2000 5
+```
+
+### Incrementing Counts
+
+```bash
+# Increment single item
+CMS.INCRBY sales_volume "product:123" 1
+
+# Increment multiple items
+CMS.INCRBY sales_volume "product:123" 5 "product:456" 3 "product:789" 2
+```
+
+### Querying Counts
+
+```bash
+# Get estimated count
+CMS.QUERY sales_volume "product:123"
+# Returns: 5 (estimated count, may be slightly higher than actual)
+
+# Query multiple items
+CMS.QUERY sales_volume "product:123" "product:456" "product:789"
+# Returns: [5, 3, 2]
+```
+
+### Example: Product Sales Tracking
+
+```python
+import redis
+
+r = redis.Redis(decode_responses=True)
+
+# Create Count-Min Sketch for sales
+r.execute_command("CMS.INITBYPROB", "sales", 0.001, 0.01)
+
+def record_sale(product_id: str, quantity: int = 1):
+    """Record product sale."""
+    r.execute_command("CMS.INCRBY", "sales", f"product:{product_id}", quantity)
+
+def get_sales_estimate(product_id: str) -> int:
+    """Get estimated sales for product."""
+    count = r.execute_command("CMS.QUERY", "sales", f"product:{product_id}")
+    return count[0]
+
+def get_top_sellers(product_ids: list) -> list:
+    """Get sales estimates for multiple products."""
+    keys = [f"product:{pid}" for pid in product_ids]
+    counts = r.execute_command("CMS.QUERY", "sales", *keys)
+    
+    # Combine and sort
+    products = list(zip(product_ids, counts))
+    products.sort(key=lambda x: x[1], reverse=True)
+    
+    return products
+
+# Usage
+record_sale("laptop-pro", 1)
+record_sale("mouse-wireless", 5)
+record_sale("keyboard-mech", 3)
+record_sale("laptop-pro", 2)
+
+print(f"Laptop Pro sales: {get_sales_estimate('laptop-pro')}")
+# Output: Laptop Pro sales: 3
+
+print(get_top_sellers(["laptop-pro", "mouse-wireless", "keyboard-mech"]))
+# Output: [('mouse-wireless', 5), ('laptop-pro', 3), ('keyboard-mech', 3)]
+```
+
+### Merging Sketches
+
+```bash
+# Merge multiple Count-Min Sketches
+CMS.MERGE dest_key source1 source2 source3
+```
+
+Useful for aggregating counts from multiple servers.
+
+## Choosing the Right Structure
+
+| Need | Use | When |
+|------|-----|------|
+| **Check if item exists** | Bloom Filter | Append-only, can tolerate false positives |
+| **Check with deletions** | Cuckoo Filter | Need to remove items, limited deletions |
+| **Track percentiles** | t-digest | Latency monitoring, SLA tracking |
+| **Find most frequent** | Top-K | Trending items, hot spots |
+| **Count frequencies** | Count-Min Sketch | Sales volumes, request counts |
+
+## Memory Efficiency
+
+All probabilistic structures use orders of magnitude less memory than exact alternatives:
+
+### Bloom Filter vs Set
+
+```python
+# Exact set: 1M usernames, ~20 bytes each = ~20MB
+for i in range(1_000_000):
+    r.sadd("usernames_exact", f"user_{i}")
+
+# Bloom filter: 1M items, 1% FP rate = ~1.2MB
+r.bf().reserve("usernames_bloom", 1_000_000, 0.01)
+
+# 16x memory savings!
+```
+
+### t-digest vs Sorted Set
+
+```python
+# Exact percentiles: Store all values in sorted set
+for i in range(1_000_000):
+    r.zadd("latencies_exact", {f"req_{i}": latency})
+
+# t-digest: Bounded memory regardless of data size
+r.execute_command("TDIGEST.CREATE", "latencies_approx")
+for latency in latencies:
+    r.execute_command("TDIGEST.ADD", "latencies_approx", latency)
+
+# ~1000x memory savings for 1M data points!
+```
+
+## Accuracy vs Space Trade-offs
+
+### Bloom Filter
+
+```bash
+# Higher accuracy (0.1% FP) = more memory
+BF.RESERVE filter1 1000000 0.001  # ~1.7MB
+
+# Lower accuracy (1% FP) = less memory
+BF.RESERVE filter2 1000000 0.01   # ~1.2MB
+
+# Even lower (5% FP) = even less memory
+BF.RESERVE filter3 1000000 0.05   # ~0.7MB
+```
+
+### t-digest
+
+```bash
+# Higher compression = more accurate, more memory
+TDIGEST.CREATE digest1 COMPRESSION 200  # Very accurate
+
+# Lower compression = less accurate, less memory
+TDIGEST.CREATE digest2 COMPRESSION 50   # Less accurate
+```
+
+## Best Practices
+
+### 1. Know Your False Positive Rate
+
+```python
+# For critical checks (fraud detection): Low FP rate
+r.bf().reserve("fraud_check", 10000000, 0.0001)  # 0.01% FP
+
+# For optimization (cache filtering): Higher FP rate OK
+r.bf().reserve("cache_keys", 10000000, 0.05)  # 5% FP acceptable
+```
+
+### 2. Size Bloom Filters Appropriately
+
+```python
+# Bad: Undersized filter
+r.bf().reserve("users", 10000, 0.01)  # But you have 1M users!
+# Result: High false positive rate as filter fills
+
+# Good: Size for expected items
+r.bf().reserve("users", 1000000, 0.01)  # Plan for growth
+```
+
+### 3. Use Count-Min Sketch for Heavy Hitters
+
+```python
+# Combine Count-Min Sketch with Top-K for efficiency
+r.execute_command("CMS.INITBYPROB", "all_items", 0.001, 0.01)
+r.execute_command("TOPK.RESERVE", "top_items", 100)
+
+# Track all items in CMS, top items in Top-K
+for item in stream:
+    r.execute_command("CMS.INCRBY", "all_items", item, 1)
+    r.execute_command("TOPK.ADD", "top_items", item)
+```
+
+### 4. Regular Cleanup
+
+```python
+# Reset probabilistic structures periodically
+def reset_daily_stats():
+    """Reset daily tracking structures."""
+    r.delete("daily_sales")  # Count-Min Sketch
+    r.execute_command("CMS.INITBYPROB", "daily_sales", 0.001, 0.01)
+    
+    r.delete("trending_today")  # Top-K
+    r.execute_command("TOPK.RESERVE", "trending_today", 20)
+```
+
+## Limitations
+
+<Warning>
+**Module Requirement**: All probabilistic data structures are only available when Redis is built with `BUILD_WITH_MODULES=yes`.
+</Warning>
+
+- **Approximate results**: Not suitable when exact counts are required
+- **No deletions in Bloom**: Use Cuckoo filter if you need deletions
+- **Memory bounds**: Structures have maximum capacity
+- **False positives**: Always possible (though configurable)
+
+## When NOT to Use
+
+Don't use probabilistic structures when:
+
+1. **Exact counts required**: Financial transactions, inventory
+2. **Zero false positives tolerable**: Security, authentication
+3. **Small datasets**: Just use exact structures (sets, sorted sets)
+4. **Frequent queries for same items**: Use caching with exact values
+
+<Note>
+Probabilistic structures shine at scale. For small datasets, exact structures are often better.
+</Note>
+
+## See Also
+
+- [HyperLogLog](/features/hyperloglog) - Built-in probabilistic cardinality estimation
+- [Time Series](/features/time-series) - Time-series data with aggregations
+- [Query Engine](/features/query-engine) - Exact search and aggregations

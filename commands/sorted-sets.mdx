@@ -1,0 +1,515 @@
+---
+title: "Sorted Set Commands"
+description: "Commands for working with Redis sorted sets - ordered collections with scores"
+---
+
+Redis sorted sets are collections of unique strings (members) ordered by an associated score. They combine the properties of sets and ordered lists, providing fast access by both member and score.
+
+## ZADD
+
+Adds one or more members to a sorted set, or updates their scores. Creates the key if it doesn't exist.
+
+### Syntax
+
+```bash
+ZADD key [NX | XX] [GT | LT] [CH] [INCR] score member [score member ...]
+```
+
+<ParamField path="key" type="key" required>
+  The sorted set key. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="NX" type="option">
+  Only add new elements. Don't update existing elements.
+</ParamField>
+
+<ParamField path="XX" type="option">
+  Only update existing elements. Don't add new elements.
+</ParamField>
+
+<ParamField path="GT" type="option">
+  Only update if new score is greater than current score.
+</ParamField>
+
+<ParamField path="LT" type="option">
+  Only update if new score is less than current score.
+</ParamField>
+
+<ParamField path="CH" type="option">
+  Modify return value to be the number of changed elements.
+</ParamField>
+
+<ParamField path="INCR" type="option">
+  Increment the score instead of setting it. Only one score-member pair allowed with this option.
+</ParamField>
+
+<ParamField path="score" type="double" required>
+  The score for ordering. Can be a double precision floating point number.
+</ParamField>
+
+<ParamField path="member" type="string" required>
+  The member to add or update.
+</ParamField>
+
+<ResponseField name="count" type="integer">
+  - The number of elements added to the sorted set (not including updates)
+  - With `CH`: The number of elements added or updated
+  - With `INCR`: The new score of the member (as string)
+</ResponseField>
+
+**Time Complexity:** O(log(N)) for each item added, where N is the number of elements in the sorted set.
+
+**History:**
+- **2.4.0**: Accepts multiple elements.
+- **3.0.2**: Added `XX`, `NX`, `CH` and `INCR` options.
+- **6.2.0**: Added `GT` and `LT` options.
+
+### Examples
+
+```bash
+redis> ZADD myzset 1 "one"
+(integer) 1
+redis> ZADD myzset 1 "uno"
+(integer) 1
+redis> ZADD myzset 2 "two" 3 "three"
+(integer) 2
+redis> ZRANGE myzset 0 -1 WITHSCORES
+1) "one"
+2) "1"
+3) "uno"
+4) "1"
+5) "two"
+6) "2"
+7) "three"
+8) "3"
+redis> ZADD myzset 4 "three" CH
+(integer) 1
+redis> ZADD myzset INCR 1 "one"
+"2"
+```
+
+## ZRANGE
+
+Returns members in a sorted set within a range.
+
+### Syntax
+
+```bash
+ZRANGE key start stop [BYSCORE | BYLEX] [REV] [LIMIT offset count] [WITHSCORES]
+```
+
+<ParamField path="key" type="key" required>
+  The sorted set key.
+</ParamField>
+
+<ParamField path="start" type="integer" required>
+  Starting position (0-based index) or minimum score.
+</ParamField>
+
+<ParamField path="stop" type="integer" required>
+  Ending position (inclusive) or maximum score.
+</ParamField>
+
+<ParamField path="BYSCORE" type="option">
+  Interpret start and stop as scores instead of indices.
+</ParamField>
+
+<ParamField path="BYLEX" type="option">
+  Interpret start and stop as lexicographical ranges (for elements with same score).
+</ParamField>
+
+<ParamField path="REV" type="option">
+  Return results in reverse order.
+</ParamField>
+
+<ParamField path="LIMIT" type="option">
+  Limit results (similar to SQL LIMIT).
+</ParamField>
+
+<ParamField path="WITHSCORES" type="option">
+  Return scores along with members.
+</ParamField>
+
+<ResponseField name="members" type="array">
+  List of members in the specified range, optionally with scores.
+</ResponseField>
+
+**Time Complexity:** O(log(N)+M) where N is elements in sorted set and M is elements returned.
+
+### Examples
+
+```bash
+redis> ZADD myzset 1 "one" 2 "two" 3 "three"
+(integer) 3
+redis> ZRANGE myzset 0 -1
+1) "one"
+2) "two"
+3) "three"
+redis> ZRANGE myzset 2 3
+1) "three"
+redis> ZRANGE myzset -2 -1
+1) "two"
+2) "three"
+redis> ZRANGE myzset 0 1 WITHSCORES
+1) "one"
+2) "1"
+3) "two"
+4) "2"
+redis> ZRANGE myzset 1 3 BYSCORE WITHSCORES
+1) "one"
+2) "1"
+3) "two"
+4) "2"
+5) "three"
+6) "3"
+```
+
+## ZRANK
+
+Returns the rank (position) of a member in a sorted set.
+
+### Syntax
+
+```bash
+ZRANK key member [WITHSCORE]
+```
+
+<ParamField path="key" type="key" required>
+  The sorted set key.
+</ParamField>
+
+<ParamField path="member" type="string" required>
+  The member to get rank for.
+</ParamField>
+
+<ParamField path="WITHSCORE" type="option">
+  Also return the score of the member.
+</ParamField>
+
+<ResponseField name="rank" type="integer">
+  The rank (0-based) of member, or `nil` if member doesn't exist.
+  With WITHSCORE: array containing rank and score.
+</ResponseField>
+
+**Time Complexity:** O(log(N))
+
+### Examples
+
+```bash
+redis> ZADD myzset 1 "one" 2 "two" 3 "three"
+(integer) 3
+redis> ZRANK myzset "three"
+(integer) 2
+redis> ZRANK myzset "four"
+(nil)
+redis> ZRANK myzset "three" WITHSCORE
+1) (integer) 2
+2) "3"
+```
+
+## ZSCORE
+
+Returns the score of a member in a sorted set.
+
+### Syntax
+
+```bash
+ZSCORE key member
+```
+
+<ParamField path="key" type="key" required>
+  The sorted set key.
+</ParamField>
+
+<ParamField path="member" type="string" required>
+  The member to get score for.
+</ParamField>
+
+<ResponseField name="score" type="string">
+  The score of member (as string), or `nil` if member doesn't exist.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> ZADD myzset 1 "one"
+(integer) 1
+redis> ZSCORE myzset "one"
+"1"
+redis> ZSCORE myzset "nosuchmember"
+(nil)
+```
+
+## Related Commands
+
+### Additional Sorted Set Commands
+
+- **ZREM**: Remove members
+- **ZCARD**: Get cardinality (number of members)
+- **ZCOUNT**: Count members within score range
+- **ZINCRBY**: Increment member score
+- **ZREVRANGE**: Range in reverse order (deprecated, use ZRANGE REV)
+- **ZRANGEBYSCORE**: Range by score (deprecated, use ZRANGE BYSCORE)
+- **ZREVRANGEBYSCORE**: Reverse range by score (deprecated)
+- **ZRANGEBYLEX**: Range by lexicographical order
+- **ZPOPMIN**: Remove and return lowest scored member(s)
+- **ZPOPMAX**: Remove and return highest scored member(s)
+- **BZPOPMIN**: Blocking ZPOPMIN
+- **BZPOPMAX**: Blocking ZPOPMAX
+- **ZMSCORE**: Get scores of multiple members
+- **ZRANDMEMBER**: Get random member(s)
+- **ZREMRANGEBYRANK**: Remove by rank range
+- **ZREMRANGEBYSCORE**: Remove by score range
+- **ZREMRANGEBYLEX**: Remove by lexicographical range
+- **ZLEXCOUNT**: Count in lexicographical range
+- **ZSCAN**: Iterate members
+- **ZINTER**: Intersection of sorted sets
+- **ZUNION**: Union of sorted sets
+- **ZDIFF**: Difference of sorted sets
+- **ZINTERSTORE**: Store intersection
+- **ZUNIONSTORE**: Store union
+- **ZDIFFSTORE**: Store difference
+- **ZMPOP**: Pop from multiple sorted sets
+- **ZREVRANK**: Reverse rank
+
+## Use Cases
+
+### Leaderboard
+
+Implement a game leaderboard:
+
+```bash
+# Add player scores
+redis> ZADD leaderboard 1000 "player:1" 1500 "player:2" 1200 "player:3"
+(integer) 3
+
+# Get top 10 players
+redis> ZRANGE leaderboard 0 9 REV WITHSCORES
+1) "player:2"
+2) "1500"
+3) "player:3"
+4) "1200"
+5) "player:1"
+6) "1000"
+
+# Get player rank
+redis> ZREVRANK leaderboard "player:2"
+(integer) 0
+
+# Update score
+redis> ZINCRBY leaderboard 100 "player:1"
+"1100"
+```
+
+### Priority Queue
+
+Implement priority-based task queue:
+
+```bash
+# Add tasks with priority
+redis> ZADD tasks 1 "low-priority-task" 5 "high-priority-task" 3 "medium-task"
+(integer) 3
+
+# Get highest priority task
+redis> ZPOPMAX tasks
+1) "high-priority-task"
+2) "5"
+```
+
+### Time Series Data
+
+Store time-stamped events:
+
+```bash
+# Add events with timestamps
+redis> ZADD events 1640000000 "event1" 1640000100 "event2" 1640000200 "event3"
+(integer) 3
+
+# Get events in time range
+redis> ZRANGE events 1640000000 1640000150 BYSCORE
+1) "event1"
+2) "event2"
+
+# Count events in range
+redis> ZCOUNT events 1640000000 1640000300
+(integer) 3
+```
+
+### Rate Limiting (Sliding Window)
+
+Implement sliding window rate limiter:
+
+```bash
+# Record request with timestamp
+redis> ZADD requests:user:1000 $(date +%s) "req:1"
+(integer) 1
+
+# Remove old requests (older than 60 seconds)
+redis> ZREMRANGEBYSCORE requests:user:1000 0 $(($(date +%s) - 60))
+(integer) 0
+
+# Count requests in last 60 seconds
+redis> ZCARD requests:user:1000
+(integer) 1
+```
+
+### Autocomplete
+
+Implement prefix-based autocomplete:
+
+```bash
+# Add terms with scores (popularity)
+redis> ZADD autocomplete 100 "redis" 80 "react" 60 "redshift" 90 "redux"
+(integer) 4
+
+# Find terms starting with "red"
+redis> ZRANGE autocomplete [red (ref BYLEX LIMIT 0 10
+1) "redis"
+2) "redshift"
+3) "redux"
+```
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Indexing**: ZADD, ZREM are O(log N) - efficient even for large sets
+2. **Range Queries**: ZRANGE is O(log(N) + M) - efficient for small ranges
+3. **Score Lookups**: ZSCORE is O(1) - very fast
+4. **Avoid**: Full scans on very large sorted sets
+
+### Memory Optimization
+
+1. Use integer scores when possible
+2. Trim old entries periodically with ZREMRANGEBYSCORE
+3. Consider ziplist encoding for small sorted sets
+4. Monitor memory usage with MEMORY USAGE
+
+### Score Range Queries
+
+<Tabs>
+  <Tab title="Inclusive Range">
+    Use regular scores:
+    
+    ```bash
+    redis> ZRANGE leaderboard 100 200 BYSCORE
+    # Returns members with scores 100 <= score <= 200
+    ```
+  </Tab>
+  
+  <Tab title="Exclusive Range">
+    Use parentheses:
+    
+    ```bash
+    redis> ZRANGE leaderboard (100 (200 BYSCORE
+    # Returns members with scores 100 < score < 200
+    ```
+  </Tab>
+  
+  <Tab title="Infinite Range">
+    Use -inf and +inf:
+    
+    ```bash
+    redis> ZRANGE leaderboard -inf 200 BYSCORE
+    # Returns members with scores <= 200
+    ```
+  </Tab>
+</Tabs>
+
+## Patterns
+
+### Top-N Pattern
+
+Maintain only top N elements:
+
+```bash
+# Add element
+redis> ZADD top100 1000 "item1"
+(integer) 1
+
+# Keep only top 100
+redis> ZREMRANGEBYRANK top100 0 -101
+(integer) 0
+
+# Get top 10
+redis> ZRANGE top100 0 9 REV
+(empty array)
+```
+
+### Composite Score
+
+Combine multiple factors into score:
+
+```bash
+# Score = popularity * 1000 + recency
+redis> ZADD content 1001640000000 "post:1"
+(integer) 1
+# 100 likes * 1000 + timestamp
+```
+
+### Tag Cloud
+
+Implement weighted tags:
+
+```bash
+redis> ZADD tags 10 "redis" 5 "database" 15 "cache" 3 "nosql"
+(integer) 4
+redis> ZRANGE tags 0 -1 REV WITHSCORES
+1) "cache"
+2) "15"
+3) "redis"
+4) "10"
+5) "database"
+6) "5"
+7) "nosql"
+8) "3"
+```
+
+### Geospatial Index
+
+Store locations with geohash scores:
+
+```bash
+# Note: Redis has dedicated GEO commands for this
+# This shows the sorted set concept
+redis> ZADD locations 123456789 "location:1"
+(integer) 1
+```
+
+<Warning>
+For true geospatial queries, use Redis GEO commands (GEOADD, GEORADIUS, etc.) which are built on top of sorted sets.
+</Warning>
+
+## Sorted Set vs Other Data Structures
+
+| Feature | Sorted Set | Set | List |
+|---------|-----------|-----|------|
+| Order | Score | None | Insertion |
+| Duplicates | No | No | Yes |
+| Access | O(log N) | O(1) | O(N) |
+| Range Query | Yes | No | Yes |
+| Use Case | Rankings | Uniqueness | Sequences |
+
+## Common Patterns
+
+### Trending Content
+
+```bash
+# Score = upvotes * time_decay
+redis> ZADD trending $(echo "10 * $(date +%s)" | bc) "post:1"
+(integer) 1
+redis> ZRANGE trending 0 9 REV
+1) "post:1"
+```
+
+### Expiring Leaderboard
+
+```bash
+# Daily leaderboard
+redis> ZADD leaderboard:2024-03-03 1000 "player:1"
+(integer) 1
+redis> EXPIRE leaderboard:2024-03-03 86400
+(integer) 1
+```

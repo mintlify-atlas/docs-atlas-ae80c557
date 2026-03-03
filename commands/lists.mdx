@@ -1,0 +1,481 @@
+---
+title: "List Commands"
+description: "Commands for working with Redis lists - ordered collections of strings"
+---
+
+Redis lists are ordered collections of strings, sorted by insertion order. They are implemented as linked lists, making head and tail operations very fast.
+
+## LPUSH
+
+Prepends one or more elements to a list. Creates the key if it doesn't exist.
+
+### Syntax
+
+```bash
+LPUSH key element [element ...]
+```
+
+<ParamField path="key" type="key" required>
+  The list key. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="element" type="string" required>
+  One or more elements to prepend to the list.
+</ParamField>
+
+<ResponseField name="length" type="integer">
+  The length of the list after the push operations.
+</ResponseField>
+
+**Time Complexity:** O(1) for each element added, so O(N) to add N elements.
+
+**History:**
+- **2.4.0**: Accepts multiple `element` arguments.
+
+### Examples
+
+```bash
+redis> LPUSH mylist "world"
+(integer) 1
+redis> LPUSH mylist "hello"
+(integer) 2
+redis> LRANGE mylist 0 -1
+1) "hello"
+2) "world"
+redis> LPUSH mylist "foo" "bar"
+(integer) 4
+redis> LRANGE mylist 0 -1
+1) "bar"
+2) "foo"
+3) "hello"
+4) "world"
+```
+
+## RPUSH
+
+Appends one or more elements to a list. Creates the key if it doesn't exist.
+
+### Syntax
+
+```bash
+RPUSH key element [element ...]
+```
+
+<ParamField path="key" type="key" required>
+  The list key. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="element" type="string" required>
+  One or more elements to append to the list.
+</ParamField>
+
+<ResponseField name="length" type="integer">
+  The length of the list after the push operations.
+</ResponseField>
+
+**Time Complexity:** O(1) for each element added, so O(N) to add N elements.
+
+**History:**
+- **2.4.0**: Accepts multiple `element` arguments.
+
+### Examples
+
+```bash
+redis> RPUSH mylist "hello"
+(integer) 1
+redis> RPUSH mylist "world"
+(integer) 2
+redis> LRANGE mylist 0 -1
+1) "hello"
+2) "world"
+redis> RPUSH mylist "foo" "bar"
+(integer) 4
+redis> LRANGE mylist 0 -1
+1) "hello"
+2) "world"
+3) "foo"
+4) "bar"
+```
+
+## LPOP
+
+Removes and returns the first element of a list.
+
+### Syntax
+
+```bash
+LPOP key [count]
+```
+
+<ParamField path="key" type="key" required>
+  The list key.
+</ParamField>
+
+<ParamField path="count" type="integer">
+  Number of elements to pop. Returns an array if specified.
+</ParamField>
+
+<ResponseField name="element" type="string">
+  The value of the first element, or `nil` when key does not exist.
+  If count is specified, returns an array of popped elements.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of elements returned.
+
+**History:**
+- **6.2.0**: Added the `count` argument.
+
+### Examples
+
+```bash
+redis> RPUSH mylist "one" "two" "three" "four" "five"
+(integer) 5
+redis> LPOP mylist
+"one"
+redis> LPOP mylist 2
+1) "two"
+2) "three"
+redis> LRANGE mylist 0 -1
+1) "four"
+2) "five"
+```
+
+## RPOP
+
+Removes and returns the last element of a list.
+
+### Syntax
+
+```bash
+RPOP key [count]
+```
+
+<ParamField path="key" type="key" required>
+  The list key.
+</ParamField>
+
+<ParamField path="count" type="integer">
+  Number of elements to pop. Returns an array if specified.
+</ParamField>
+
+<ResponseField name="element" type="string">
+  The value of the last element, or `nil` when key does not exist.
+  If count is specified, returns an array of popped elements.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of elements returned.
+
+**History:**
+- **6.2.0**: Added the `count` argument.
+
+### Examples
+
+```bash
+redis> RPUSH mylist "one" "two" "three" "four" "five"
+(integer) 5
+redis> RPOP mylist
+"five"
+redis> RPOP mylist 2
+1) "four"
+2) "three"
+redis> LRANGE mylist 0 -1
+1) "one"
+2) "two"
+```
+
+## LRANGE
+
+Returns a range of elements from a list.
+
+### Syntax
+
+```bash
+LRANGE key start stop
+```
+
+<ParamField path="key" type="key" required>
+  The list key.
+</ParamField>
+
+<ParamField path="start" type="integer" required>
+  The starting index (0-based). Negative indices count from the end (-1 is last element).
+</ParamField>
+
+<ParamField path="stop" type="integer" required>
+  The ending index (inclusive). Negative indices count from the end.
+</ParamField>
+
+<ResponseField name="elements" type="array">
+  List of elements in the specified range.
+</ResponseField>
+
+**Time Complexity:** O(S+N) where S is the distance of start from HEAD for small lists, and N is the number of elements in the range.
+
+### Examples
+
+```bash
+redis> RPUSH mylist "one" "two" "three"
+(integer) 3
+redis> LRANGE mylist 0 0
+1) "one"
+redis> LRANGE mylist -3 2
+1) "one"
+2) "two"
+3) "three"
+redis> LRANGE mylist -100 100
+1) "one"
+2) "two"
+3) "three"
+redis> LRANGE mylist 5 10
+(empty array)
+```
+
+## LLEN
+
+Returns the length of a list.
+
+### Syntax
+
+```bash
+LLEN key
+```
+
+<ParamField path="key" type="key" required>
+  The list key.
+</ParamField>
+
+<ResponseField name="length" type="integer">
+  The length of the list, or 0 when key does not exist.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> LPUSH mylist "World"
+(integer) 1
+redis> LPUSH mylist "Hello"
+(integer) 2
+redis> LLEN mylist
+(integer) 2
+```
+
+## Related Commands
+
+### Additional List Commands
+
+- **LINDEX**: Get element by index
+- **LSET**: Set element value by index
+- **LINSERT**: Insert element before or after another
+- **LREM**: Remove elements by value
+- **LTRIM**: Trim list to specified range
+- **BLPOP**: Blocking left pop
+- **BRPOP**: Blocking right pop
+- **RPOPLPUSH**: Pop from one list, push to another
+- **BRPOPLPUSH**: Blocking RPOPLPUSH
+- **LMOVE**: Move element between lists
+- **BLMOVE**: Blocking LMOVE
+- **LPOS**: Find index of element
+- **LMPOP**: Pop from multiple lists
+
+## Use Cases
+
+### Message Queue
+
+Implement a simple message queue:
+
+```bash
+# Producer pushes messages
+redis> RPUSH queue:tasks "task1"
+(integer) 1
+redis> RPUSH queue:tasks "task2"
+(integer) 2
+
+# Consumer pops messages
+redis> LPOP queue:tasks
+"task1"
+redis> LPOP queue:tasks
+"task2"
+```
+
+### Activity Feed
+
+Store user activity with LPUSH and retrieve with LRANGE:
+
+```bash
+redis> LPUSH user:1000:feed "logged in"
+(integer) 1
+redis> LPUSH user:1000:feed "viewed profile"
+(integer) 2
+redis> LPUSH user:1000:feed "posted comment"
+(integer) 3
+redis> LRANGE user:1000:feed 0 9
+1) "posted comment"
+2) "viewed profile"
+3) "logged in"
+```
+
+### Fixed-Size List
+
+Maintain a capped list with LPUSH and LTRIM:
+
+```bash
+redis> LPUSH mylist "new item"
+(integer) 1
+redis> LTRIM mylist 0 99
+OK
+```
+
+### Stack (LIFO)
+
+Use LPUSH and LPOP for stack operations:
+
+```bash
+redis> LPUSH stack "first"
+(integer) 1
+redis> LPUSH stack "second"
+(integer) 2
+redis> LPOP stack
+"second"
+redis> LPOP stack
+"first"
+```
+
+### Queue (FIFO)
+
+Use RPUSH and LPOP for queue operations:
+
+```bash
+redis> RPUSH queue "first"
+(integer) 1
+redis> RPUSH queue "second"
+(integer) 2
+redis> LPOP queue
+"first"
+redis> LPOP queue
+"second"
+```
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Head/Tail Operations**: LPUSH, RPUSH, LPOP, RPOP are O(1) - very fast
+2. **Index Access**: LINDEX is O(N) for middle elements - avoid on large lists
+3. **Range Operations**: Use LRANGE carefully with large lists
+4. **List Size**: Monitor list size to prevent unbounded growth
+
+### Memory Management
+
+1. Use LTRIM to maintain fixed-size lists
+2. Set expiration on temporary lists
+3. Consider streams for large message queues
+4. Use LLEN to check size before operations
+
+### Blocking Operations
+
+<Tabs>
+  <Tab title="Blocking Pop">
+    Use BLPOP/BRPOP for efficient queue consumption:
+    
+    ```bash
+    # Consumer blocks waiting for messages
+    redis> BLPOP queue:tasks 30
+    1) "queue:tasks"
+    2) "task1"
+    ```
+  </Tab>
+  
+  <Tab title="Non-Blocking Pop">
+    Use LPOP/RPOP for polling:
+    
+    ```bash
+    # Consumer polls periodically
+    redis> LPOP queue:tasks
+    "task1"
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Blocking operations (BLPOP, BRPOP) hold a connection until data is available or timeout occurs. Use appropriate timeouts to prevent connection exhaustion.
+</Warning>
+
+## Patterns
+
+### Reliable Queue
+
+Implement a reliable queue with processing list:
+
+```bash
+# Move item from queue to processing
+redis> RPOPLPUSH queue:tasks queue:processing
+"task1"
+
+# After processing, remove from processing list
+redis> LREM queue:processing 1 "task1"
+(integer) 1
+
+# On failure, move back to queue
+redis> RPOPLPUSH queue:processing queue:tasks
+"task1"
+```
+
+### Circular List
+
+Use RPOPLPUSH with same list for circular iteration:
+
+```bash
+redis> RPUSH mylist "one" "two" "three"
+(integer) 3
+redis> RPOPLPUSH mylist mylist
+"three"
+redis> LRANGE mylist 0 -1
+1) "three"
+2) "one"
+3) "two"
+```
+
+### Timeline
+
+Store time-ordered events:
+
+```bash
+redis> LPUSH timeline:global "event3 at $(date +%s)"
+(integer) 1
+redis> LPUSH timeline:global "event2 at $(date +%s)"
+(integer) 2
+redis> LPUSH timeline:global "event1 at $(date +%s)"
+(integer) 3
+redis> LRANGE timeline:global 0 9
+1) "event1 at 1234567890"
+2) "event2 at 1234567880"
+3) "event3 at 1234567870"
+```
+
+## List vs Other Data Structures
+
+| Feature | List | Stream | Sorted Set |
+|---------|------|--------|------------|
+| Order | Insertion | Time-based ID | Score-based |
+| Duplicates | Yes | Yes | No (unique members) |
+| Access | Index, Range | ID, Range | Score, Rank |
+| Use Case | Queues, Stacks | Event streams | Leaderboards |
+| Blocking | Yes (BLPOP) | Yes (XREAD) | No |
+
+## Common Errors
+
+1. **WRONGTYPE**: Operating on wrong type
+   ```bash
+   redis> SET mykey "string"
+   OK
+   redis> LPUSH mykey "value"
+   (error) WRONGTYPE Operation against a key holding the wrong kind of value
+   ```
+
+2. **Index out of range**: LINDEX returns nil
+   ```bash
+   redis> LINDEX mylist 1000
+   (nil)
+   ```

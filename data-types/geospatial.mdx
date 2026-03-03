@@ -1,0 +1,358 @@
+---
+title: Geospatial indexes
+description: Store and query longitude/latitude coordinates with radius and bounding box searches
+---
+
+Redis geospatial indexes allow you to store longitude/latitude coordinates and perform radius queries, distance calculations, and proximity searches. Built on sorted sets using geohash encoding.
+
+## Use Cases
+
+- **Location-based services**: Find nearby restaurants, stores, or users
+- **Delivery tracking**: Find drivers near a delivery address
+- **Ride-sharing**: Match riders with nearby drivers
+- **Real estate**: Search properties within an area
+- **Gaming**: Find players in proximity
+- **IoT devices**: Locate sensors or assets in a region
+
+## Key Commands
+
+### Adding Locations
+
+```bash
+# Add single location (longitude, latitude, member)
+redis> GEOADD locations -122.4194 37.7749 "San Francisco"
+(integer) 1
+
+# Add multiple locations
+redis> GEOADD locations 
+  -118.2437 34.0522 "Los Angeles" 
+  -73.9352 40.7306 "Brooklyn" 
+  -73.9949 40.7282 "Manhattan"
+(integer) 3
+
+# Update existing location (XX option)
+redis> GEOADD locations XX -122.4200 37.7750 "San Francisco"
+(integer) 0
+
+# Add only if doesn't exist (NX option)
+redis> GEOADD locations NX -122.3321 47.6062 "Seattle"
+(integer) 1
+```
+
+### Radius Queries
+
+```bash
+# Find locations within radius
+redis> GEORADIUS locations -122.4194 37.7749 100 km
+1) "San Francisco"
+
+# Find with distances
+redis> GEORADIUS locations -122.4194 37.7749 500 km WITHDIST
+1) 1) "San Francisco"
+   2) "0.0002"
+2) 1) "Los Angeles"
+   2) "559.2362"
+
+# Find with coordinates
+redis> GEORADIUS locations -122.4194 37.7749 500 km WITHCOORD
+1) 1) "San Francisco"
+   2) 1) "-122.41939842700958252"
+      2) "37.77490009169188668"
+
+# Radius from existing member
+redis> GEORADIUSBYMEMBER locations "San Francisco" 500 km
+1) "San Francisco"
+2) "Los Angeles"
+
+# Limit results and sort
+redis> GEORADIUS locations -122.4194 37.7749 1000 km COUNT 2 ASC
+1) "San Francisco"
+2) "Los Angeles"
+```
+
+### Modern GEOSEARCH (Redis 6.2+)
+
+```bash
+# Search by radius from coordinates
+redis> GEOSEARCH locations FROMLONLAT -122.4194 37.7749 BYRADIUS 500 km
+1) "San Francisco"
+2) "Los Angeles"
+
+# Search by radius from member
+redis> GEOSEARCH locations FROMMEMBER "San Francisco" BYRADIUS 500 km
+1) "San Francisco"
+2) "Los Angeles"
+
+# Search in bounding box (width x height)
+redis> GEOSEARCH locations FROMLONLAT -122.4194 37.7749 BYBOX 600 600 km
+1) "San Francisco"
+2) "Los Angeles"
+
+# With distances and coordinates
+redis> GEOSEARCH locations FROMMEMBER "San Francisco" BYRADIUS 500 km 
+  WITHDIST WITHCOORD COUNT 5 ASC
+```
+
+### Distance and Position
+
+```bash
+# Get distance between locations
+redis> GEODIST locations "San Francisco" "Los Angeles" km
+"559.2362"
+
+# Get in different units
+redis> GEODIST locations "San Francisco" "Los Angeles" mi
+"347.4210"
+
+# Get coordinates
+redis> GEOPOS locations "San Francisco" "Brooklyn"
+1) 1) "-122.41939842700958252"
+   2) "37.77490009169188668"
+2) 1) "-73.93519818782806396"
+   2) "40.73059881448093077"
+
+# Get geohash
+redis> GEOHASH locations "San Francisco"
+1) "9q8yyk8yuv0"
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| GEOADD | O(log N) | Add location |
+| GEORADIUS | O(N+log M) | N=radius items, M=total |
+| GEORADIUSBYMEMBER | O(N+log M) | N=radius items, M=total |
+| GEOSEARCH | O(N+log M) | N=box items, M=total |
+| GEODIST | O(log N) | Distance between two |
+| GEOPOS | O(N) | N=members requested |
+| GEOHASH | O(N) | N=members requested |
+
+## Patterns and Examples
+
+### Find Nearby Restaurants
+
+```bash
+# Add restaurants with coordinates
+redis> GEOADD restaurants 
+  -122.4183 37.7799 "Tartine Bakery" 
+  -122.4161 37.7833 "Zuni Cafe" 
+  -122.4089 37.7835 "State Bird Provisions"
+(integer) 3
+
+# Find restaurants within 2km
+redis> GEOSEARCH restaurants 
+  FROMLONLAT -122.4194 37.7749 
+  BYRADIUS 2 km 
+  WITHDIST 
+  ASC
+1) 1) "Tartine Bakery"
+   2) "0.5634"
+2) 1) "Zuni Cafe"
+   2) "0.9876"
+3) 1) "State Bird Provisions"
+   2) "1.2345"
+
+# Find 5 closest restaurants
+redis> GEOSEARCH restaurants 
+  FROMMEMBER "Tartine Bakery" 
+  BYRADIUS 5 km 
+  COUNT 5 
+  ASC
+```
+
+### Ride-Sharing Driver Matching
+
+```bash
+# Add available drivers
+redis> GEOADD drivers:available 
+  -122.4183 37.7799 "driver:123" 
+  -122.4089 37.7835 "driver:456" 
+  -122.4250 37.7694 "driver:789"
+(integer) 3
+
+# Find nearest driver for pickup
+redis> GEOSEARCH drivers:available 
+  FROMLONLAT -122.4194 37.7749 
+  BYRADIUS 3 km 
+  COUNT 1 
+  ASC 
+  WITHDIST
+1) 1) "driver:789"
+   2) "0.6523"
+
+# Remove driver when assigned
+redis> ZREM drivers:available "driver:789"
+(integer) 1
+
+# Calculate distance to destination
+redis> GEODIST drivers:available "driver:123" "dropoff_location" km
+"4.5678"
+```
+
+### Store Locator
+
+```bash
+# Add store locations
+redis> GEOADD stores 
+  -122.4194 37.7749 "store:sf:union" 
+  -122.3321 47.6062 "store:seattle:downtown" 
+  -118.2437 34.0522 "store:la:santa-monica"
+(integer) 3
+
+# Find stores in customer's area
+redis> GEOSEARCH stores 
+  FROMLONLAT -122.4000 37.7800 
+  BYRADIUS 5 km 
+  WITHCOORD 
+  WITHDIST
+1) 1) "store:sf:union"
+   2) "2.3456"
+   3) 1) "-122.41939842700958252"
+      2) "37.77490009169188668"
+
+# Check if store is within delivery zone (10km)
+redis> GEODIST stores "store:sf:union" "customer_location" km
+"3.4567"  # Yes, within 10km
+```
+
+### Real Estate Search
+
+```bash
+# Add properties
+redis> GEOADD properties 
+  -122.4194 37.7749 "property:1001" 
+  -122.4183 37.7799 "property:1002" 
+  -122.4089 37.7835 "property:1003"
+(integer) 3
+
+# Search in rectangular area (bounding box)
+redis> GEOSEARCH properties 
+  FROMLONLAT -122.4194 37.7749 
+  BYBOX 2 2 km 
+  WITHCOORD
+1) 1) "property:1001"
+   2) 1) "-122.41939842700958252"
+      2) "37.77490009169188668"
+2) 1) "property:1002"
+   2) 1) "-122.41829872131347656"
+      2) "37.77989959716796875"
+```
+
+### Gaming - Find Nearby Players
+
+```bash
+# Update player positions
+redis> GEOADD players 
+  -122.4183 37.7799 "player:alice" 
+  -122.4089 37.7835 "player:bob"
+(integer) 2
+
+# Find players within 1km
+redis> GEOSEARCH players 
+  FROMMEMBER "player:alice" 
+  BYRADIUS 1 km 
+  WITHDIST
+1) 1) "player:alice"
+   2) "0.0000"
+2) 1) "player:bob"
+   2) "0.8765"
+
+# Update position when player moves
+redis> GEOADD players -122.4150 37.7820 "player:alice"
+(integer) 0
+```
+
+## Geohash Encoding
+
+Redis uses geohash to encode coordinates:
+
+```bash
+# Get geohash
+redis> GEOHASH locations "San Francisco"
+1) "9q8yyk8yuv0"
+
+# Nearby locations have similar prefixes
+redis> GEOHASH locations "San Francisco" "Los Angeles"
+1) "9q8yyk8yuv0"  # San Francisco
+2) "9q5ctr4xg80"  # Los Angeles
+# Common prefix: "9q" (both in California)
+```
+
+<Note>
+Geohashes with longer common prefixes are geographically closer. Redis stores these as sorted set scores, enabling efficient range queries.
+</Note>
+
+## Units
+
+Supported distance units:
+
+- `m`: meters
+- `km`: kilometers  
+- `mi`: miles
+- `ft`: feet
+
+```bash
+redis> GEODIST locations "San Francisco" "Los Angeles" km
+"559.2362"
+redis> GEODIST locations "San Francisco" "Los Angeles" mi
+"347.4210"
+```
+
+## Internal Structure
+
+Geospatial indexes are stored as sorted sets:
+
+```bash
+# Geospatial index is a sorted set
+redis> TYPE locations
+zset
+
+# Can use sorted set commands
+redis> ZRANGE locations 0 -1
+1) "Los Angeles"
+2) "San Francisco"
+3) "Brooklyn"
+4) "Manhattan"
+
+# Remove location
+redis> ZREM locations "Manhattan"
+(integer) 1
+
+# Get all locations with scores (geohashes)
+redis> ZRANGE locations 0 -1 WITHSCORES
+```
+
+## Best Practices
+
+1. **Use GEOSEARCH** instead of deprecated GEORADIUS/GEORADIUSBYMEMBER
+2. **Set expiration** on temporary location data (active drivers, players)
+3. **Use COUNT** to limit results for performance
+4. **Index by category** (restaurants, hotels, stores) for faster queries
+5. **Update locations** when entities move
+
+<Warning>
+GEORADIUS and GEORADIUSBYMEMBER are deprecated since Redis 6.2. Use GEOSEARCH instead for better performance and more features.
+</Warning>
+
+<Tip>
+For applications with many categories (restaurants, hotels, stores), create separate geospatial indexes per category rather than one large index. This significantly improves query performance.
+</Tip>
+
+## Limitations
+
+- **Earth assumed as sphere**: Slight inaccuracy at poles
+- **Coordinate precision**: ±0.5 meters
+- **No altitude**: Only 2D coordinates (longitude, latitude)
+- **Periodic updates**: Moving entities require position updates
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sorted Sets" href="/data-types/sorted-sets">
+    Underlying data structure
+  </Card>
+  <Card title="Sorted Set Commands" href="/commands/sorted-sets">
+    For advanced operations
+  </Card>
+</CardGroup>

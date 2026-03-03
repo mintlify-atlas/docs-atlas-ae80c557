@@ -1,0 +1,523 @@
+---
+title: "Pub/Sub Commands"
+description: "Commands for Redis publish/subscribe messaging patterns"
+---
+
+Redis Pub/Sub implements the publish/subscribe messaging paradigm where senders (publishers) send messages to channels without knowledge of subscribers, and receivers (subscribers) receive messages from channels they're interested in.
+
+## PUBLISH
+
+Posts a message to a channel.
+
+### Syntax
+
+```bash
+PUBLISH channel message
+```
+
+<ParamField path="channel" type="string" required>
+  The channel name to publish to.
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  The message to send.
+</ParamField>
+
+<ResponseField name="subscribers" type="integer">
+  The number of clients that received the message. In Redis Cluster, only clients connected to the same node are counted.
+</ResponseField>
+
+**Time Complexity:** O(N+M) where N is the number of clients subscribed to the channel and M is the total number of subscribed patterns.
+
+### Examples
+
+```bash
+redis> PUBLISH news "Breaking news: Redis is fast!"
+(integer) 0
+redis> PUBLISH news "Another update"
+(integer) 2
+```
+
+## SUBSCRIBE
+
+Subscribes to one or more channels.
+
+### Syntax
+
+```bash
+SUBSCRIBE channel [channel ...]
+```
+
+<ParamField path="channel" type="string" required>
+  The channel name(s) to subscribe to.
+</ParamField>
+
+<ResponseField name="messages" type="stream">
+  Streams of messages from subscribed channels. Format:
+  - `["subscribe", channel, num_subscribed]` - Subscription confirmation
+  - `["message", channel, message_data]` - Published message
+  - `["unsubscribe", channel, num_remaining]` - Unsubscription confirmation
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of channels to subscribe to.
+
+### Examples
+
+```bash
+redis> SUBSCRIBE news
+Reading messages... (press Ctrl-C to quit)
+1) "subscribe"
+2) "news"
+3) (integer) 1
+1) "message"
+2) "news"
+3) "Breaking news: Redis is fast!"
+```
+
+<Warning>
+Once a client enters subscribed mode with SUBSCRIBE, it cannot issue other commands except SUBSCRIBE, PSUBSCRIBE, UNSUBSCRIBE, PUNSUBSCRIBE, PING, and QUIT.
+</Warning>
+
+## PSUBSCRIBE
+
+Subscribes to channels matching patterns.
+
+### Syntax
+
+```bash
+PSUBSCRIBE pattern [pattern ...]
+```
+
+<ParamField path="pattern" type="pattern" required>
+  The glob-style pattern(s) to match channel names:
+  - `*` matches any characters
+  - `?` matches a single character
+  - `[abc]` matches one character from the set
+</ParamField>
+
+<ResponseField name="messages" type="stream">
+  Streams of messages from channels matching patterns. Format:
+  - `["psubscribe", pattern, num_subscribed]` - Subscription confirmation
+  - `["pmessage", pattern, channel, message_data]` - Published message
+  - `["punsubscribe", pattern, num_remaining]` - Unsubscription confirmation
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the number of patterns to subscribe to.
+
+### Examples
+
+```bash
+redis> PSUBSCRIBE news.*
+Reading messages... (press Ctrl-C to quit)
+1) "psubscribe"
+2) "news.*"
+3) (integer) 1
+1) "pmessage"
+2) "news.*"
+3) "news.tech"
+4) "New tech article published"
+1) "pmessage"
+2) "news.*"
+3) "news.sports"
+4) "Match results are in"
+```
+
+## Related Commands
+
+### Additional Pub/Sub Commands
+
+- **UNSUBSCRIBE**: Unsubscribe from channels
+- **PUNSUBSCRIBE**: Unsubscribe from patterns
+- **PUBSUB CHANNELS**: List active channels
+- **PUBSUB NUMSUB**: Get subscriber count per channel
+- **PUBSUB NUMPAT**: Get pattern subscription count
+- **PUBSUB SHARDCHANNELS**: List active shard channels
+- **PUBSUB SHARDNUMSUB**: Get shard channel subscriber count
+- **SPUBLISH**: Publish to shard channel
+- **SSUBSCRIBE**: Subscribe to shard channels
+- **SUNSUBSCRIBE**: Unsubscribe from shard channels
+
+## Use Cases
+
+### Real-Time Notifications
+
+Send notifications to users:
+
+```bash
+# Publisher sends notification
+redis> PUBLISH notifications:user:1000 "You have a new message"
+(integer) 1
+
+# Subscriber receives (in another client)
+redis> SUBSCRIBE notifications:user:1000
+1) "subscribe"
+2) "notifications:user:1000"
+3) (integer) 1
+1) "message"
+2) "notifications:user:1000"
+3) "You have a new message"
+```
+
+### Chat Application
+
+Implement chat rooms:
+
+```bash
+# User joins chat room
+redis> SUBSCRIBE chat:room:general
+1) "subscribe"
+2) "chat:room:general"
+3) (integer) 1
+
+# User sends message (from another client)
+redis> PUBLISH chat:room:general "Alice: Hello everyone!"
+(integer) 5
+
+# All subscribers receive
+1) "message"
+2) "chat:room:general"
+3) "Alice: Hello everyone!"
+```
+
+### Event Broadcasting
+
+Broadcast system events:
+
+```bash
+# Subscribe to all system events
+redis> PSUBSCRIBE system.*
+1) "psubscribe"
+2) "system.*"
+3) (integer) 1
+
+# Publish different event types
+redis> PUBLISH system.startup "Server started"
+(integer) 1
+redis> PUBLISH system.error "Disk space low"
+(integer) 1
+redis> PUBLISH system.shutdown "Server stopping"
+(integer) 1
+```
+
+### Cache Invalidation
+
+Notify cache invalidation:
+
+```bash
+# Subscribe to cache invalidation events
+redis> SUBSCRIBE cache:invalidate
+
+# When data changes, publish invalidation
+redis> SET user:1000:profile "{updated_data}"
+OK
+redis> PUBLISH cache:invalidate "user:1000:profile"
+(integer) 3
+
+# All cache instances receive and clear
+```
+
+### Live Dashboard
+
+Update dashboards in real-time:
+
+```bash
+# Dashboard subscribes to metrics
+redis> SUBSCRIBE metrics:realtime
+
+# Metrics service publishes updates
+redis> PUBLISH metrics:realtime "{cpu:45,memory:60,requests:1500}"
+(integer) 10
+```
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Fire and Forget**: PUBLISH doesn't guarantee delivery
+2. **No Persistence**: Messages are not stored
+3. **Blocking**: Subscribers are in blocking mode
+4. **Pattern Matching**: PSUBSCRIBE is slower than SUBSCRIBE
+
+### Reliability Considerations
+
+<Tabs>
+  <Tab title="Standard Pub/Sub">
+    Fast but unreliable:
+    
+    ```bash
+    # Messages lost if no subscribers
+    redis> PUBLISH channel "message"
+    (integer) 0
+    
+    # Messages lost if subscriber disconnects
+    ```
+    
+    **Use for**: Real-time, non-critical notifications
+  </Tab>
+  
+  <Tab title="Streams Alternative">
+    Persistent and reliable:
+    
+    ```bash
+    # Messages persist
+    redis> XADD channel * message "data"
+    "1640000000000-0"
+    
+    # Consumers can read history
+    redis> XREAD STREAMS channel 0
+    ```
+    
+    **Use for**: Critical messages, event sourcing
+  </Tab>
+</Tabs>
+
+### Connection Management
+
+1. Maintain persistent connections for subscribers
+2. Handle reconnection with resubscription
+3. Monitor connection health with PING
+4. Use connection pools wisely
+
+## Patterns
+
+### Fan-Out Messaging
+
+One publisher, many subscribers:
+
+```bash
+# Publisher
+redis> PUBLISH broadcasts "Important announcement"
+(integer) 100
+
+# All 100 subscribers receive the message
+```
+
+### Topic Routing
+
+Route messages by topic:
+
+```bash
+# Subscribe to specific topics
+redis> SUBSCRIBE news.tech news.sports
+
+# Or use patterns
+redis> PSUBSCRIBE news.*
+
+# Publisher sends to specific topics
+redis> PUBLISH news.tech "New gadget released"
+redis> PUBLISH news.sports "Championship results"
+```
+
+### Presence Detection
+
+Detect online users:
+
+```bash
+# Subscribe to presence channel
+redis> SUBSCRIBE presence
+
+# Users publish when online
+redis> PUBLISH presence "user:1000:online"
+redis> PUBLISH presence "user:1001:online"
+redis> PUBLISH presence "user:1000:offline"
+```
+
+### Microservices Communication
+
+Service-to-service messaging:
+
+```bash
+# Service A subscribes to orders
+redis> SUBSCRIBE orders.new
+
+# Service B publishes new orders
+redis> PUBLISH orders.new "{order_id:1000,customer:alice}"
+
+# Service A processes order
+```
+
+### Command Broadcast
+
+Broadcast commands to workers:
+
+```bash
+# Workers subscribe to commands
+redis> SUBSCRIBE worker:commands
+
+# Admin broadcasts command
+redis> PUBLISH worker:commands "reload_config"
+
+# All workers reload configuration
+```
+
+## Pub/Sub vs Other Patterns
+
+| Feature | Pub/Sub | Streams | Lists |
+|---------|---------|---------|-------|
+| Persistence | No | Yes | Yes |
+| History | No | Yes | Yes |
+| Delivery | At most once | At least once | Exactly once |
+| Speed | Fastest | Fast | Fast |
+| Use Case | Real-time | Events | Queues |
+
+## Advanced Patterns
+
+### Namespace Isolation
+
+Isolate channels by namespace:
+
+```bash
+# Development environment
+redis> SUBSCRIBE dev:notifications
+
+# Production environment
+redis> SUBSCRIBE prod:notifications
+
+# Prevent cross-environment messages
+```
+
+### Message Filtering
+
+Filter messages on client side:
+
+```bash
+# Subscribe to all
+redis> PSUBSCRIBE events.*
+
+# Filter in application code
+# if message matches criteria:
+#     process(message)
+# else:
+#     ignore(message)
+```
+
+### Hybrid Approach
+
+Combine Pub/Sub with persistence:
+
+```bash
+# Publish to both
+redis> PUBLISH realtime:updates "data"
+redis> XADD persistent:updates * data "data"
+
+# Realtime subscribers get instant updates
+# Historical consumers can replay from stream
+```
+
+### Subscription Management
+
+Track active subscriptions:
+
+```bash
+# List active channels
+redis> PUBSUB CHANNELS
+1) "news"
+2) "chat:room:general"
+
+# Count subscribers
+redis> PUBSUB NUMSUB news chat:room:general
+1) "news"
+2) (integer) 5
+3) "chat:room:general"
+4) (integer) 12
+
+# Count pattern subscriptions
+redis> PUBSUB NUMPAT
+(integer) 3
+```
+
+## Common Issues
+
+### Message Loss
+
+<Warning>
+Pub/Sub messages are lost if:
+- No subscribers are listening
+- Subscriber disconnects
+- Network issues occur
+- Subscriber is slow (buffer overflow)
+</Warning>
+
+**Solution**: Use Streams for critical messages
+
+### Client Blocking
+
+Subscribers cannot execute other commands:
+
+```bash
+# After SUBSCRIBE, this fails:
+redis> SUBSCRIBE channel
+redis> GET key
+(error) ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context
+```
+
+**Solution**: Use separate connections for Pub/Sub
+
+### Pattern Overhead
+
+Pattern subscriptions check every published message:
+
+```bash
+# Many patterns slow down publishing
+redis> PSUBSCRIBE pattern1 pattern2 pattern3 ...
+```
+
+**Solution**: Use specific channels when possible
+
+## Integration Examples
+
+### Python Example
+
+```python
+import redis
+
+# Subscriber
+r = redis.Redis()
+p = r.pubsub()
+p.subscribe('news')
+
+for message in p.listen():
+    if message['type'] == 'message':
+        print(f"Received: {message['data']}")
+
+# Publisher (separate process)
+r = redis.Redis()
+r.publish('news', 'Breaking news!')
+```
+
+### Node.js Example
+
+```javascript
+const redis = require('redis');
+
+// Subscriber
+const sub = redis.createClient();
+sub.subscribe('news');
+sub.on('message', (channel, message) => {
+    console.log(`Received from ${channel}: ${message}`);
+});
+
+// Publisher (separate client)
+const pub = redis.createClient();
+pub.publish('news', 'Breaking news!');
+```
+
+## Monitoring
+
+Monitor Pub/Sub activity:
+
+```bash
+# Monitor all commands (including PUBLISH)
+redis> MONITOR
+OK
+1640000000.123456 [0 127.0.0.1:12345] "PUBLISH" "channel" "message"
+
+# Check active channels
+redis> PUBSUB CHANNELS
+
+# Check subscriber counts
+redis> PUBSUB NUMSUB channel1 channel2
+
+# Check pattern subscriptions
+redis> PUBSUB NUMPAT
+```

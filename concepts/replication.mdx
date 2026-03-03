@@ -1,0 +1,527 @@
+---
+title: 'Replication'
+description: 'Master-replica replication architecture, synchronization mechanisms, and configuration'
+---
+
+## Overview
+
+Redis supports asynchronous master-replica replication where one or more replicas maintain a copy of the master's dataset. This enables:
+
+- **Read scaling**: Distribute read queries across replicas
+- **High availability**: Automatic failover with Sentinel
+- **Data redundancy**: Multiple copies for disaster recovery
+
+```
+┌──────────────────┐
+│  Master          │  Accepts writes
+│  (Primary)       │
+└────────┬─────────┘
+         │
+         │ Replication Stream
+         │
+    ┌────┴────┬──────────┐
+    │         │          │
+    ▼         ▼          ▼
+┌───────┐ ┌───────┐ ┌───────┐
+│Replica│ │Replica│ │Replica│  Read-only
+│   1   │ │   2   │ │   3   │  (by default)
+└───────┘ └───────┘ └───────┘
+```
+
+## Replication Modes
+
+### Full Synchronization (SYNC/PSYNC)
+
+When a replica connects for the first time or cannot catch up via partial resync:
+
+1. **Handshake**: Replica sends PSYNC with replication ID and offset
+2. **RDB Generation**: Master creates snapshot (background save)
+3. **Transfer**: Master sends RDB to replica
+4. **Buffering**: Master buffers writes during transfer
+5. **Load**: Replica loads RDB
+6. **Catch-up**: Replica applies buffered writes
+7. **Streaming**: Replica receives continuous updates
+
+### Partial Resynchronization
+
+From `replication.c:943-1040`, when a replica reconnects after brief disconnection:
+
+```c
+int masterTryPartialResynchronization(client *c, long long psync_offset) {
+    long long psync_len;
+    char *master_replid = c->argv[1]->ptr;
+    
+    // Check replication ID matches
+    if (strcasecmp(master_replid, server.replid) &&
+        (strcasecmp(master_replid, server.replid2) ||
+         psync_offset > server.second_replid_offset))
+    {
+        goto need_full_resync;
+    }
+    
+    // Check if we have data replica needs
+    if (!server.repl_backlog ||
+        psync_offset < server.repl_backlog->offset ||
+        psync_offset > (server.repl_backlog->offset + server.repl_backlog->histlen))
+    {
+        goto need_full_resync;
+    }
+    
+    // Partial resync possible
+    c->flags |= CLIENT_SLAVE;
+    c->replstate = SLAVE_STATE_ONLINE;
+    
+    // Send continuation marker
+    buflen = snprintf(buf,sizeof(buf),"+CONTINUE %s\r\n", server.replid);
+    connWrite(c->conn,buf,buflen);
+    
+    // Send backlog data from offset
+    psync_len = addReplyReplicationBacklog(c,psync_offset);
+    
+    return C_OK;
+    
+need_full_resync:
+    return C_ERR;
+}
+```
+
+<Note>
+Partial resync requires the master to still have the data in its replication backlog. Size the backlog appropriately for your disconnection scenarios.
+</Note>
+
+## Replication States
+
+From `server.h:513-530`:
+
+```c
+typedef enum {
+    REPL_STATE_NONE = 0,            // No active replication
+    REPL_STATE_CONNECT,             // Must connect to master
+    REPL_STATE_CONNECTING,          // Connecting to master
+    // --- Handshake states ---
+    REPL_STATE_RECEIVE_PING_REPLY,  // Wait for PING reply
+    REPL_STATE_SEND_HANDSHAKE,      // Send handshake sequence
+    REPL_STATE_RECEIVE_AUTH_REPLY,  // Wait for AUTH reply
+    REPL_STATE_RECEIVE_PORT_REPLY,  // Wait for REPLCONF reply
+    REPL_STATE_RECEIVE_IP_REPLY,    // Wait for REPLCONF reply
+    REPL_STATE_RECEIVE_COMP_REPLY,  // Wait for REPLCONF reply
+    REPL_STATE_RECEIVE_CAPA_REPLY,  // Wait for REPLCONF reply
+    REPL_STATE_SEND_PSYNC,          // Send PSYNC
+    REPL_STATE_RECEIVE_PSYNC_REPLY, // Wait for PSYNC reply
+    REPL_STATE_TRANSFER,            // Receiving RDB from master
+    REPL_STATE_CONNECTED,           // Connected to master
+} repl_state;
+```
+
+### Replica States from Master POV
+
+From `server.h:566-575`:
+
+```c
+#define SLAVE_STATE_WAIT_BGSAVE_START 6  // Need to produce RDB
+#define SLAVE_STATE_WAIT_BGSAVE_END 7    // Waiting RDB creation
+#define SLAVE_STATE_SEND_BULK 8          // Sending RDB to replica
+#define SLAVE_STATE_ONLINE 9             // RDB sent, streaming updates
+#define SLAVE_STATE_RDB_TRANSMITTED 10   // RDB-only replica
+#define SLAVE_STATE_WAIT_RDB_CHANNEL 11  // Waiting rdb channel
+#define SLAVE_STATE_SEND_BULK_AND_STREAM 12  // RDB + stream in parallel
+```
+
+## Replication Backlog
+
+### Purpose
+
+The replication backlog is a circular buffer that stores recent writes, enabling partial resynchronization.
+
+From `replication.c:244-256`:
+
+```c
+void createReplicationBacklog(void) {
+    serverAssert(server.repl_backlog == NULL);
+    server.repl_backlog = zmalloc(sizeof(replBacklog));
+    server.repl_backlog->ref_repl_buf_node = NULL;
+    server.repl_backlog->unindexed_count = 0;
+    server.repl_backlog->blocks_index = raxNew();
+    server.repl_backlog->histlen = 0;
+    // Virtual first byte offset
+    server.repl_backlog->offset = server.master_repl_offset+1;
+}
+```
+
+### Configuration
+
+From `redis.conf:724-748`:
+
+```
+# Replication backlog size
+repl-backlog-size 1mb
+
+# Free backlog after N seconds with no replicas
+repl-backlog-ttl 3600
+```
+
+### Sizing Guidelines
+
+**Calculate required backlog size:**
+
+```
+Backlog size = Write rate (bytes/sec) × Acceptable disconnection time (sec)
+```
+
+**Example:**
+- Write rate: 10 MB/s
+- Acceptable disconnection: 60 seconds
+- Required backlog: 10 MB/s × 60s = 600 MB
+
+<Tip>
+Set `repl-backlog-size` to at least 2-3x your calculated minimum to handle burst writes and provide safety margin.
+</Tip>
+
+### Backlog Trimming
+
+From `replication.c:401-454`:
+
+```c
+void incrementalTrimReplicationBacklog(size_t max_blocks) {
+    serverAssert(server.repl_backlog != NULL);
+    
+    size_t trimmed_blocks = 0;
+    while (server.repl_backlog->histlen > server.repl_backlog_size &&
+           trimmed_blocks < max_blocks)
+    {
+        // Never trim to less than one block
+        if (listLength(server.repl_buffer_blocks) <= 1) break;
+        
+        listNode *first = listFirst(server.repl_buffer_blocks);
+        replBufBlock *fo = listNodeValue(first);
+        
+        // Backlog must be last reference
+        if (fo->refcount != 1) break;
+        
+        // Don't trim if would go below size
+        if (server.repl_backlog->histlen - (long long)fo->size <=
+            server.repl_backlog_size) break;
+        
+        // Trim this block
+        fo->refcount--;
+        trimmed_blocks++;
+        server.repl_backlog->histlen -= fo->size;
+        
+        // Update references
+        listNode *next = listNextNode(first);
+        server.repl_backlog->ref_repl_buf_node = next;
+        ((replBufBlock *)listNodeValue(next))->refcount++;
+        
+        // Remove from index
+        uint64_t encoded_offset = htonu64(fo->repl_offset);
+        raxRemove(server.repl_backlog->blocks_index,
+            (unsigned char*)&encoded_offset, sizeof(uint64_t), NULL);
+        
+        // Delete block
+        listDelNode(server.repl_buffer_blocks, first);
+    }
+}
+```
+
+Trimming happens incrementally to avoid latency spikes.
+
+## Replication Buffer
+
+### Buffer Structure
+
+From `replication.c:476-580`, replication uses a shared buffer for all replicas:
+
+```c
+void feedReplicationBuffer(char *s, size_t len) {
+    if (server.repl_backlog == NULL) return;
+    
+    while(len > 0) {
+        listNode *ln = listLast(server.repl_buffer_blocks);
+        replBufBlock *tail = ln ? listNodeValue(ln) : NULL;
+        
+        // Append to existing block if space
+        if (tail && tail->size > tail->used) {
+            size_t avail = tail->size - tail->used;
+            size_t copy = (avail >= len) ? len : avail;
+            memcpy(tail->buf + tail->used, s, copy);
+            tail->used += copy;
+            s += copy;
+            len -= copy;
+            server.master_repl_offset += copy;
+            server.repl_backlog->histlen += copy;
+        }
+        
+        // Create new block if needed
+        if (len) {
+            size_t limit = max((size_t)server.repl_backlog_size / 16, 
+                             (size_t)PROTO_REPLY_CHUNK_BYTES);
+            size_t size = min(max(len, (size_t)PROTO_REPLY_CHUNK_BYTES), limit);
+            tail = zmalloc_usable(size + sizeof(replBufBlock), &usable_size);
+            tail->size = usable_size - sizeof(replBufBlock);
+            tail->used = min(tail->size, len);
+            tail->refcount = 0;
+            tail->repl_offset = server.master_repl_offset + 1;
+            memcpy(tail->buf, s, tail->used);
+            listAddNodeTail(server.repl_buffer_blocks, tail);
+            server.repl_buffer_mem += usable_size + sizeof(listNode);
+            // Update offsets and length
+            len -= tail->used;
+            s += tail->used;
+            server.master_repl_offset += tail->used;
+            server.repl_backlog->histlen += tail->used;
+        }
+    }
+}
+```
+
+### Block Size
+
+- **Minimum**: `PROTO_REPLY_CHUNK_BYTES` (16KB)
+- **Maximum**: `repl_backlog_size / 16` to avoid huge blocks
+- **Goal**: Balance between memory overhead and efficiency
+
+## Diskless Replication
+
+### Configuration
+
+From `redis.conf:608-647`:
+
+```
+# Enable diskless replication
+repl-diskless-sync yes
+
+# Delay before starting transfer (wait for more replicas)
+repl-diskless-sync-delay 5
+
+# Maximum replicas to wait for
+repl-diskless-sync-max-replicas 0
+```
+
+### How It Works
+
+**Disk-backed (traditional):**
+1. Master forks and writes RDB to disk
+2. Master sends RDB file to replica
+3. Multiple replicas can share same RDB
+
+**Diskless:**
+1. Master forks and writes RDB directly to replica socket
+2. No intermediate disk write
+3. Each replica gets separate transfer
+
+<Note>
+Diskless replication is beneficial with fast networks and slow disks (e.g., cloud instances with network-attached storage).
+</Note>
+
+### Replica-side Loading
+
+From `redis.conf:662-688`:
+
+```
+# How replica loads RDB from replication
+repl-diskless-load disabled  # Store to disk first (safest)
+repl-diskless-load swapdb    # Keep old data until fully loaded
+repl-diskless-load flushdb   # Delete old data immediately
+repl-diskless-load on-empty-db  # Diskless only when empty
+```
+
+**Trade-offs:**
+
+| Mode | Memory Usage | Availability | Risk |
+|------|--------------|--------------|------|
+| `disabled` | Low | High | Lowest |
+| `swapdb` | 2x | High | Medium |
+| `flushdb` | 1x | Low | High |
+| `on-empty-db` | 1x | Medium | Low |
+
+<Warning>
+`flushdb` mode deletes existing data before loading RDB. If RDB load fails, all data is lost.
+</Warning>
+
+## RDB Channel Replication
+
+Redis 7.0+ supports parallel RDB transfer and command streaming.
+
+### How It Works
+
+From `replication.c:912-927`:
+
+```c
+if (slave->flags & CLIENT_REPL_RDB_CHANNEL) {
+    // Find associated main channel
+    uint64_t id = slave->main_ch_client_id;
+    client *c = lookupClientByID(id);
+    if (c && c->replstate == SLAVE_STATE_WAIT_RDB_CHANNEL) {
+        c->replstate = SLAVE_STATE_SEND_BULK_AND_STREAM;
+        serverLog(LL_NOTICE, 
+            "Starting to deliver RDB and replication stream to replica: %s",
+            replicationGetSlaveName(c));
+    }
+}
+```
+
+**Two connections:**
+
+1. **Main Channel**: Streams commands immediately
+2. **RDB Channel**: Transfers RDB in parallel
+
+Replica buffers commands during RDB load, then applies them.
+
+**Benefits:**
+- Faster catch-up
+- Lower replication lag
+- Better resource utilization
+
+## Replication Timeout
+
+From `redis.conf:696-707`:
+
+```
+# Replication timeout applies to:
+# 1) Bulk transfer I/O during SYNC
+# 2) Master timeout from replica perspective
+# 3) Replica timeout from master perspective
+
+repl-timeout 60
+```
+
+<Warning>
+Ensure `repl-timeout` > `repl-ping-replica-period` to avoid false disconnections during low traffic.
+</Warning>
+
+## Configuration Reference
+
+### Setting Up Replication
+
+**On replica:**
+
+```
+# Static configuration
+replicaof <master-ip> <master-port>
+
+# Or at runtime
+REPLICAOF <master-ip> <master-port>
+
+# Stop replication
+REPLICAOF NO ONE
+```
+
+### Authentication
+
+From `redis.conf:558-574`:
+
+```
+# Master password (Redis 5.x)
+masterauth <password>
+
+# Master user and password (Redis 6.0+)
+masteruser <username>
+masterauth <password>
+```
+
+### Read-Only Replicas
+
+From `redis.conf:592-606`:
+
+```
+# Replicas read-only by default
+replica-read-only yes
+```
+
+<Tip>
+Keep replicas read-only in production to prevent data divergence.
+</Tip>
+
+### Write Requirements
+
+From `redis.conf:820-840`:
+
+```
+# Require minimum replicas to accept writes
+min-replicas-to-write 3
+min-replicas-max-lag 10
+```
+
+Master refuses writes if fewer than N replicas with lag ≤ M seconds.
+
+## Monitoring Replication
+
+### INFO Replication
+
+```bash
+redis-cli INFO replication
+```
+
+**Master output:**
+```
+role:master
+connected_slaves:2
+slave0:ip=10.0.0.2,port=6379,state=online,offset=12345,lag=0
+slave1:ip=10.0.0.3,port=6379,state=online,offset=12345,lag=1
+master_repl_offset:12345
+repl_backlog_active:1
+repl_backlog_size:1048576
+repl_backlog_first_byte_offset:1
+repl_backlog_histlen:12345
+```
+
+**Replica output:**
+```
+role:slave
+master_host:10.0.0.1
+master_port:6379
+master_link_status:up
+master_last_io_seconds_ago:1
+master_sync_in_progress:0
+slave_repl_offset:12345
+slave_priority:100
+slave_read_only:1
+```
+
+### Key Metrics
+
+- **Replication lag**: `master_last_io_seconds_ago` on replica
+- **Offset difference**: Master offset - replica offset
+- **Backlog size**: Ensure adequate for disconnections
+- **Link status**: `up` vs `down`
+
+<Note>
+Monitor `repl_backlog_histlen` vs `repl_backlog_size`. If close to equal, increase backlog size to prevent forced full resyncs.
+</Note>
+
+## Troubleshooting
+
+### Replica Not Syncing
+
+**Check:**
+1. Network connectivity: Can replica reach master port?
+2. Authentication: Correct `masterauth` if password set?
+3. Master logs: Any connection/auth errors?
+4. Replica state: `INFO replication` shows `master_link_status`
+
+### Constant Full Resyncs
+
+**Causes:**
+- Backlog too small for disconnection time
+- Network instability causing frequent disconnects
+- Slow replica can't keep up
+
+**Solutions:**
+- Increase `repl-backlog-size`
+- Reduce `repl-timeout` carefully
+- Upgrade replica hardware
+- Check for blocking operations on replica
+
+### High Replication Lag
+
+**Causes:**
+- Network bandwidth saturated
+- Slow replica (CPU/disk bottleneck)
+- Large write load on master
+- Blocking operations on replica
+
+**Solutions:**
+- Upgrade network bandwidth
+- Use diskless replication
+- Optimize slow queries on replica
+- Disable `replica-serve-stale-data` temporarily

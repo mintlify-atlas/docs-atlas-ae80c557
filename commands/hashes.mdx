@@ -1,0 +1,530 @@
+---
+title: "Hash Commands"
+description: "Commands for working with Redis hashes - field-value pair collections"
+---
+
+Redis hashes are maps between string fields and string values. They're ideal for representing objects and storing multiple related values under a single key.
+
+## HSET
+
+Sets field-value pairs in a hash. Creates the key if it doesn't exist.
+
+### Syntax
+
+```bash
+HSET key field value [field value ...]
+```
+
+<ParamField path="key" type="key" required>
+  The hash key. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="field" type="string" required>
+  The field name to set.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  The value to set for the field.
+</ParamField>
+
+<ResponseField name="count" type="integer">
+  The number of fields that were added (not including updates to existing fields).
+</ResponseField>
+
+**Time Complexity:** O(1) for each field/value pair added, so O(N) for N pairs.
+
+**History:**
+- **4.0.0**: Accepts multiple `field` and `value` arguments.
+
+### Examples
+
+```bash
+redis> HSET myhash field1 "Hello"
+(integer) 1
+redis> HGET myhash field1
+"Hello"
+redis> HSET myhash field2 "World" field3 "!"
+(integer) 2
+redis> HGETALL myhash
+1) "field1"
+2) "Hello"
+3) "field2"
+4) "World"
+5) "field3"
+6) "!"
+```
+
+## HGET
+
+Returns the value of a field in a hash.
+
+### Syntax
+
+```bash
+HGET key field
+```
+
+<ParamField path="key" type="key" required>
+  The hash key.
+</ParamField>
+
+<ParamField path="field" type="string" required>
+  The field name to retrieve.
+</ParamField>
+
+<ResponseField name="value" type="string">
+  The value associated with field, or `nil` if field doesn't exist.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> HSET myhash field1 "foo"
+(integer) 1
+redis> HGET myhash field1
+"foo"
+redis> HGET myhash field2
+(nil)
+```
+
+## HGETALL
+
+Returns all fields and values in a hash.
+
+### Syntax
+
+```bash
+HGETALL key
+```
+
+<ParamField path="key" type="key" required>
+  The hash key.
+</ParamField>
+
+<ResponseField name="fields" type="array">
+  Array of field-value pairs (field1, value1, field2, value2, ...).
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the size of the hash.
+
+<Warning>
+HGETALL loads all fields into memory. For large hashes, use HSCAN to iterate incrementally.
+</Warning>
+
+### Examples
+
+```bash
+redis> HSET myhash field1 "Hello" field2 "World"
+(integer) 2
+redis> HGETALL myhash
+1) "field1"
+2) "Hello"
+3) "field2"
+4) "World"
+```
+
+## HINCRBY
+
+Increments the integer value of a hash field by the given number.
+
+### Syntax
+
+```bash
+HINCRBY key field increment
+```
+
+<ParamField path="key" type="key" required>
+  The hash key.
+</ParamField>
+
+<ParamField path="field" type="string" required>
+  The field to increment.
+</ParamField>
+
+<ParamField path="increment" type="integer" required>
+  The increment value (can be negative).
+</ParamField>
+
+<ResponseField name="value" type="integer">
+  The value of the field after incrementing.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> HSET myhash field 5
+(integer) 1
+redis> HINCRBY myhash field 1
+(integer) 6
+redis> HINCRBY myhash field -1
+(integer) 5
+redis> HINCRBY myhash field -10
+(integer) -5
+```
+
+## Related Commands
+
+### Additional Hash Commands
+
+- **HMGET**: Get multiple field values
+- **HMSET**: Set multiple fields (deprecated, use HSET)
+- **HSETNX**: Set field only if it doesn't exist
+- **HDEL**: Delete one or more fields
+- **HEXISTS**: Check if field exists
+- **HKEYS**: Get all field names
+- **HVALS**: Get all values
+- **HLEN**: Get number of fields
+- **HSTRLEN**: Get length of field value
+- **HINCRBYFLOAT**: Increment by float
+- **HSCAN**: Iterate fields
+- **HRANDFIELD**: Get random field(s)
+
+## Use Cases
+
+### User Profile
+
+Store user information:
+
+```bash
+redis> HSET user:1000 username "alice" email "alice@example.com" age "30"
+(integer) 3
+redis> HGET user:1000 username
+"alice"
+redis> HGETALL user:1000
+1) "username"
+2) "alice"
+3) "email"
+4) "alice@example.com"
+5) "age"
+6) "30"
+redis> HINCRBY user:1000 age 1
+(integer) 31
+```
+
+### Session Store
+
+Store session data:
+
+```bash
+redis> HSET session:abc123 user_id "1000" created "1640000000" last_seen "1640010000"
+(integer) 3
+redis> EXPIRE session:abc123 1800
+(integer) 1
+redis> HGET session:abc123 user_id
+"1000"
+```
+
+### Product Catalog
+
+Store product details:
+
+```bash
+redis> HSET product:2000 name "Laptop" price "999.99" stock "50" category "electronics"
+(integer) 4
+redis> HMGET product:2000 name price
+1) "Laptop"
+2) "999.99"
+redis> HINCRBY product:2000 stock -1
+(integer) 49
+```
+
+### Statistics Tracking
+
+Track various counters:
+
+```bash
+redis> HINCRBY stats:website views 1
+(integer) 1
+redis> HINCRBY stats:website unique_visitors 1
+(integer) 1
+redis> HINCRBY stats:website page_errors 1
+(integer) 1
+redis> HGETALL stats:website
+1) "views"
+2) "1"
+3) "unique_visitors"
+4) "1"
+5) "page_errors"
+6) "1"
+```
+
+### Rate Limiting by User
+
+Track API calls per endpoint:
+
+```bash
+redis> HINCRBY rate:user:1000 "/api/users" 1
+(integer) 1
+redis> HINCRBY rate:user:1000 "/api/posts" 1
+(integer) 1
+redis> HGET rate:user:1000 "/api/users"
+"1"
+redis> EXPIRE rate:user:1000 60
+(integer) 1
+```
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Field Access**: HGET, HSET are O(1) - very fast
+2. **Full Hash**: HGETALL is O(N) - use carefully on large hashes
+3. **Iteration**: Use HSCAN for large hashes instead of HGETALL
+4. **Atomic Counters**: HINCRBY is atomic and thread-safe
+
+### Memory Optimization
+
+1. **Small Hashes**: Redis uses efficient ziplist encoding for small hashes
+2. **Field Count**: Keep under 512 fields for optimal encoding
+3. **Value Size**: Keep values under 64 bytes for ziplist encoding
+4. **Compression**: Consider compressing large values before storing
+
+### Hash vs Separate Keys
+
+<Tabs>
+  <Tab title="Using Hash">
+    Store related data together:
+    
+    ```bash
+    redis> HSET user:1000 name "Alice" age "30"
+    (integer) 2
+    redis> HGET user:1000 name
+    "Alice"
+    ```
+    
+    **Pros**: 
+    - Memory efficient for small objects
+    - Atomic operations on related data
+    - Logical grouping
+    
+    **Cons**:
+    - Can't set TTL per field
+    - Less flexible for partial updates
+  </Tab>
+  
+  <Tab title="Separate Keys">
+    Store fields as individual keys:
+    
+    ```bash
+    redis> SET user:1000:name "Alice"
+    OK
+    redis> SET user:1000:age "30"
+    OK
+    redis> GET user:1000:name
+    "Alice"
+    ```
+    
+    **Pros**:
+    - Individual TTL per field
+    - Better for selective access
+    - Works with Redis Cluster key distribution
+    
+    **Cons**:
+    - More memory overhead
+    - Multiple operations needed
+  </Tab>
+</Tabs>
+
+## Patterns
+
+### Object Storage
+
+Store complete objects:
+
+```bash
+# Store article
+redis> HSET article:1 title "Redis Guide" author "alice" views "0" likes "0"
+(integer) 4
+
+# Update counters
+redis> HINCRBY article:1 views 1
+(integer) 1
+redis> HINCRBY article:1 likes 1
+(integer) 1
+```
+
+### Multi-Tenant Counters
+
+Track metrics per tenant:
+
+```bash
+redis> HINCRBY metrics:tenant1 api_calls 1
+(integer) 1
+redis> HINCRBY metrics:tenant1 errors 0
+(integer) 0
+redis> HINCRBY metrics:tenant2 api_calls 1
+(integer) 1
+redis> HGETALL metrics:tenant1
+1) "api_calls"
+2) "1"
+3) "errors"
+4) "0"
+```
+
+### Shopping Cart
+
+Store cart items:
+
+```bash
+# Add items to cart
+redis> HSET cart:user:1000 product:1 "2"
+(integer) 1
+redis> HSET cart:user:1000 product:2 "1"
+(integer) 1
+
+# Update quantity
+redis> HINCRBY cart:user:1000 product:1 1
+(integer) 3
+
+# Get all items
+redis> HGETALL cart:user:1000
+1) "product:1"
+2) "3"
+3) "product:2"
+4) "1"
+
+# Remove item
+redis> HDEL cart:user:1000 product:2
+(integer) 1
+```
+
+### Feature Flags
+
+Store feature flags per user:
+
+```bash
+redis> HSET features:user:1000 dark_mode "true" beta_access "false"
+(integer) 2
+redis> HGET features:user:1000 dark_mode
+"true"
+redis> HEXISTS features:user:1000 admin_panel
+(integer) 0
+```
+
+### Configuration Storage
+
+Store application config:
+
+```bash
+redis> HSET config:app max_connections "100" timeout "30" debug "false"
+(integer) 3
+redis> HMGET config:app max_connections timeout
+1) "100"
+2) "30"
+```
+
+## Hash vs Other Data Structures
+
+| Feature | Hash | String (JSON) | Separate Keys |
+|---------|------|---------------|---------------|
+| Memory | Efficient | More overhead | Most overhead |
+| Field TTL | No | No | Yes |
+| Atomic Ops | Yes (per field) | No | Yes (per key) |
+| Field Access | O(1) | O(N) parse | O(1) |
+| Use Case | Objects | Complex data | Distributed data |
+
+## Advanced Patterns
+
+### Lazy Loading
+
+Load hash fields on demand:
+
+```bash
+# Check if field exists
+redis> HEXISTS user:1000 profile_data
+(integer) 0
+
+# Load from database and cache
+redis> HSET user:1000 profile_data "{...json...}"
+(integer) 1
+
+# Next access is from cache
+redis> HGET user:1000 profile_data
+"{...json...}"
+```
+
+### Aggregation
+
+Aggregate metrics from multiple hashes:
+
+```bash
+# Daily stats
+redis> HINCRBY stats:2024-03-03 views 100
+(integer) 100
+redis> HINCRBY stats:2024-03-03 clicks 25
+(integer) 25
+
+# Calculate CTR
+redis> HMGET stats:2024-03-03 views clicks
+1) "100"
+2) "25"
+# CTR = 25/100 = 0.25
+```
+
+### Batch Updates
+
+Update multiple fields atomically:
+
+```bash
+redis> HSET order:1000 status "processing" updated_at "1640000000" processor "worker:1"
+(integer) 3
+```
+
+### Sparse Data
+
+Store only non-null values:
+
+```bash
+# Only set fields that have values
+redis> HSET user:1000 username "alice"
+(integer) 1
+# Don't set middle_name if not provided
+redis> HSET user:1000 last_name "smith"
+(integer) 1
+```
+
+<Warning>
+Hashes cannot be nested. Each field value must be a string. For complex nested structures, consider storing JSON strings or using multiple hashes.
+</Warning>
+
+## Common Operations
+
+### Check and Set
+
+```bash
+# Set only if field doesn't exist
+redis> HSETNX user:1000 email "alice@example.com"
+(integer) 1
+redis> HSETNX user:1000 email "different@example.com"
+(integer) 0
+```
+
+### Bulk Retrieval
+
+```bash
+# Get multiple fields efficiently
+redis> HMGET user:1000 username email age
+1) "alice"
+2) "alice@example.com"
+3) "30"
+```
+
+### Field Counting
+
+```bash
+redis> HLEN user:1000
+(integer) 3
+```
+
+### Field Existence
+
+```bash
+redis> HEXISTS user:1000 username
+(integer) 1
+redis> HEXISTS user:1000 phone
+(integer) 0
+```

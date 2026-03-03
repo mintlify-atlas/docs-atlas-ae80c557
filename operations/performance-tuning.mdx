@@ -1,0 +1,661 @@
+---
+title: 'Performance Tuning'
+description: 'Optimize Redis performance: memory allocators, CPU usage, and configuration'
+---
+
+## Overview
+
+Redis is designed for high performance, but proper configuration and system tuning can significantly improve throughput and latency. This guide covers performance optimization techniques.
+
+## Memory Allocator
+
+Redis memory performance is heavily influenced by the memory allocator choice.
+
+### Allocator Options
+
+Redis supports three memory allocators:
+
+1. **jemalloc** (default on Linux)
+2. **libc malloc**
+3. **tcmalloc**
+
+### jemalloc (Recommended)
+
+**Default on Linux** - Best for most workloads.
+
+**Advantages:**
+- Lower memory fragmentation
+- Better performance with concurrent allocations
+- Good for long-running Redis instances
+- Optimized for multi-threaded scenarios
+
+**Build with jemalloc:**
+
+```bash
+make MALLOC=jemalloc
+```
+
+### libc malloc
+
+**Default on macOS** - Standard C library allocator.
+
+**Use Cases:**
+- Simple deployments
+- When jemalloc causes issues
+- Embedded systems
+
+**Build with libc:**
+
+```bash
+make MALLOC=libc
+```
+
+### tcmalloc
+
+**Google's TCMalloc** - Alternative high-performance allocator.
+
+**Advantages:**
+- Very fast for small allocations
+- Low overhead
+
+**Build with tcmalloc:**
+
+```bash
+make MALLOC=tcmalloc
+```
+
+### Check Current Allocator
+
+```bash
+redis-cli INFO memory | grep mem_allocator
+```
+
+Output:
+```
+mem_allocator:jemalloc-5.3.0
+```
+
+### Memory Fragmentation
+
+Monitor fragmentation ratio:
+
+```bash
+redis-cli INFO memory | grep mem_fragmentation_ratio
+```
+
+**Understanding Fragmentation Ratio:**
+- **< 1.0**: Redis is swapping (critical issue!)
+- **~1.0**: Ideal, no fragmentation
+- **1.0 - 1.5**: Normal, acceptable
+- **> 1.5**: High fragmentation, consider:
+  - Restarting Redis
+  - Switching to jemalloc
+  - Reviewing data access patterns
+
+**Dealing with High Fragmentation:**
+
+```bash
+# Check fragmentation
+redis-cli INFO memory | grep fragmentation
+
+# Active defragmentation (Redis 4.0+)
+CONFIG SET activedefrag yes
+CONFIG SET active-defrag-threshold-lower 10
+CONFIG SET active-defrag-threshold-upper 100
+```
+
+## CPU Optimization
+
+### I/O Threading
+
+Redis is single-threaded for command execution but can use multiple I/O threads for network operations.
+
+```conf
+# Enable I/O threads (Redis 6.0+)
+# Use thread count less than CPU cores
+io-threads 4
+```
+
+**Guidelines:**
+- 4 cores: Use 3 I/O threads
+- 8 cores: Use 6-7 I/O threads
+- Always leave at least one core for main thread
+- Test with redis-benchmark
+
+**Enable Only Under High Load:**
+
+```bash
+# Measure current CPU usage
+redis-cli INFO cpu
+
+# Enable I/O threads if CPU usage is high
+CONFIG SET io-threads 4
+```
+
+### Disable Transparent Huge Pages (THP)
+
+THP can cause latency issues with fork().
+
+```bash
+# Check current setting
+cat /sys/kernel/mm/transparent_hugepage/enabled
+
+# Disable THP (temporary)
+echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+
+# Disable THP (permanent)
+echo 'echo never > /sys/kernel/mm/transparent_hugepage/enabled' | \
+    sudo tee -a /etc/rc.local
+```
+
+Redis configuration:
+
+```conf
+# Redis will attempt to disable THP
+disable-thp yes
+```
+
+### CPU Affinity
+
+For critical deployments, pin Redis to specific CPU cores:
+
+```bash
+# Pin Redis to cores 0-3
+taskset -c 0-3 redis-server /etc/redis/redis.conf
+```
+
+## Network Optimization
+
+### TCP Backlog
+
+Increase backlog for high connection rates:
+
+```conf
+tcp-backlog 511
+```
+
+Ensure kernel supports it:
+
+```bash
+# Check current limit
+cat /proc/sys/net/core/somaxconn
+
+# Increase limit
+echo 65535 | sudo tee /proc/sys/net/core/somaxconn
+echo 'net.core.somaxconn=65535' | sudo tee -a /etc/sysctl.conf
+
+# Also increase SYN backlog
+echo 'net.ipv4.tcp_max_syn_backlog=8192' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+### TCP Keepalive
+
+Detect dead connections faster:
+
+```conf
+# Send keepalive every 300 seconds
+tcp-keepalive 300
+```
+
+### Client Timeout
+
+Close idle connections:
+
+```conf
+# Close connections idle for 300 seconds
+timeout 300
+
+# Or disable (0)
+timeout 0
+```
+
+## Memory Optimization
+
+### Set Maxmemory
+
+Always set memory limit in production:
+
+```conf
+# Set to 80% of available RAM
+maxmemory 8gb
+
+# Choose appropriate eviction policy
+maxmemory-policy allkeys-lru
+```
+
+**With Replicas:**
+
+Account for replica output buffers:
+
+```conf
+# Leave 20-30% free for buffers
+maxmemory 6gb  # On 8GB system with replicas
+```
+
+### Eviction Policies
+
+Choose based on use case:
+
+**Cache Use Case:**
+```conf
+maxmemory-policy allkeys-lru  # or allkeys-lfu
+```
+
+**Database Use Case:**
+```conf
+maxmemory-policy noeviction
+```
+
+**Session Store:**
+```conf
+maxmemory-policy volatile-lru
+```
+
+### Data Structure Optimization
+
+#### Use Appropriate Data Types
+
+**Strings:**
+```bash
+# Inefficient: Many small keys
+SET user:1:name "Alice"
+SET user:1:email "alice@example.com"
+SET user:1:age "30"
+
+# Efficient: Use hash
+HSET user:1 name "Alice" email "alice@example.com" age "30"
+```
+
+**Lists:**
+```bash
+# Configure list encoding
+hash-max-listpack-entries 512
+hash-max-listpack-value 64
+```
+
+**Sets:**
+```bash
+# Integer-only sets use compact encoding
+SADD numbers 1 2 3 4 5
+
+# Configure set encoding
+set-max-intset-entries 512
+```
+
+#### Key Naming Conventions
+
+Use consistent, short key names:
+
+```bash
+# Inefficient
+SET user:profile:information:name:first:1234 "Alice"
+
+# Efficient
+SET u:1234:fn "Alice"
+```
+
+**Balance readability with size:**
+- Use abbreviations for high-cardinality parts
+- Keep structure identifiers readable
+- Example: `user:123:name` → `u:123:n`
+
+## Persistence Optimization
+
+### Optimize RDB Saves
+
+```conf
+# Less frequent saves for better performance
+save 3600 1 300 100 60 10000
+
+# Or disable if data loss is acceptable
+save ""
+
+# Disable compression for faster saves (more disk space)
+rdbcompression no
+
+# Disable checksum for faster saves (less safety)
+rdbchecksum no
+```
+
+### Optimize AOF
+
+```conf
+# Faster but less durable
+appendfsync no
+
+# Balanced (recommended)
+appendfsync everysec
+
+# Most durable but slowest
+appendfsync always
+
+# Don't fsync during BGSAVE/BGREWRITEAOF
+no-appendfsync-on-rewrite yes
+```
+
+### Lazy Freeing
+
+Use background deletion for large keys:
+
+```conf
+# Enable lazy freeing
+lazyfree-lazy-eviction yes
+lazyfree-lazy-expire yes
+lazyfree-lazy-server-del yes
+replica-lazy-flush yes
+lazyfree-lazy-user-del yes
+lazyfree-lazy-user-flush yes
+```
+
+In application:
+
+```bash
+# Use UNLINK instead of DEL for large keys
+UNLINK large_key
+
+# Use FLUSHDB ASYNC
+FLUSHDB ASYNC
+```
+
+## Latency Optimization
+
+### Enable Latency Monitoring
+
+```bash
+# Enable monitoring (threshold in milliseconds)
+CONFIG SET latency-monitor-threshold 100
+
+# Check for latency issues
+LATENCY DOCTOR
+
+# View latency history
+LATENCY HISTORY
+```
+
+### Avoid Slow Commands
+
+**KEYS Command:**
+```bash
+# Never use in production!
+KEYS *  # O(N) - scans all keys
+
+# Use SCAN instead
+SCAN 0 MATCH pattern* COUNT 100
+```
+
+**Large Collection Operations:**
+```bash
+# Avoid
+LRANGE mylist 0 -1      # Returns entire list
+SMEMBERS large_set       # Returns entire set
+
+# Use pagination
+LRANGE mylist 0 99       # Get first 100 items
+SSCAN large_set 0 COUNT 100
+```
+
+**Expensive Operations:**
+```bash
+# These can be slow
+SORT                     # O(N*log(N))
+SUNION/SINTER large sets # O(N)
+ZINTERSTORE many sets    # O(N*K)
+
+# Solutions:
+# - Pre-compute results
+# - Use different data structures
+# - Split into smaller operations
+```
+
+### Command Pipelining
+
+Batch commands to reduce round trips:
+
+**Without Pipelining:**
+```python
+for i in range(10000):
+    r.set(f"key{i}", f"value{i}")  # 10000 round trips
+```
+
+**With Pipelining:**
+```python
+pipe = r.pipeline()
+for i in range(10000):
+    pipe.set(f"key{i}", f"value{i}")
+pipe.execute()  # 1 round trip
+```
+
+### Use MGET/MSET
+
+```bash
+# Inefficient: Multiple round trips
+GET key1
+GET key2
+GET key3
+
+# Efficient: Single round trip
+MGET key1 key2 key3
+
+# Same for SET
+MSET key1 value1 key2 value2 key3 value3
+```
+
+## Operating System Tuning
+
+### Disable Swap
+
+Swapping kills Redis performance:
+
+```bash
+# Check swap usage
+free -h
+
+# Disable swap
+sudo swapoff -a
+
+# Make permanent
+sudo sed -i '/swap/d' /etc/fstab
+```
+
+### Increase File Descriptors
+
+```bash
+# Check current limit
+ulimit -n
+
+# Increase limit
+echo 'redis soft nofile 65535' | sudo tee -a /etc/security/limits.conf
+echo 'redis hard nofile 65535' | sudo tee -a /etc/security/limits.conf
+```
+
+Also set in Redis:
+
+```conf
+maxclients 10000
+```
+
+### Memory Overcommit
+
+Required for BGSAVE:
+
+```bash
+# Enable memory overcommit
+echo 'vm.overcommit_memory=1' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+### TCP Optimizations
+
+```bash
+# Add to /etc/sysctl.conf
+cat <<EOF | sudo tee -a /etc/sysctl.conf
+# TCP optimizations for Redis
+net.core.somaxconn=65535
+net.ipv4.tcp_max_syn_backlog=8192
+net.ipv4.tcp_fin_timeout=30
+net.ipv4.tcp_keepalive_time=300
+net.ipv4.tcp_keepalive_intvl=30
+net.ipv4.tcp_keepalive_probes=3
+EOF
+
+sudo sysctl -p
+```
+
+## Benchmarking
+
+### Using redis-benchmark
+
+```bash
+# Basic benchmark
+redis-benchmark -q -n 100000
+
+# Test specific operations
+redis-benchmark -t set,get -n 1000000 -q
+
+# Test with pipeline
+redis-benchmark -t set,get -n 1000000 -P 16 -q
+
+# Test with different data sizes
+redis-benchmark -t set,get -n 100000 -d 1024 -q
+
+# Multi-threaded benchmark
+redis-benchmark -t set,get -n 1000000 --threads 4 -q
+```
+
+### Interpreting Results
+
+Key metrics:
+- **Requests per second**: Higher is better
+- **Latency percentiles**: Lower is better
+- **Throughput**: MB/s processed
+
+Example output:
+```
+SET: 142857.14 requests per second
+GET: 151515.16 requests per second
+```
+
+### Real-World Testing
+
+Test with your actual workload:
+
+```bash
+# Capture production traffic
+redis-cli MONITOR | tee commands.txt
+
+# Replay against test server
+# (Parse commands.txt and replay)
+```
+
+## Performance Monitoring
+
+### Key Metrics to Track
+
+```bash
+#!/bin/bash
+# performance-monitor.sh
+
+echo "=== Redis Performance Metrics ==="
+
+# Operations per second
+redis-cli INFO stats | grep instantaneous_ops_per_sec
+
+# Memory usage
+redis-cli INFO memory | grep used_memory_human
+redis-cli INFO memory | grep mem_fragmentation_ratio
+
+# CPU usage
+redis-cli INFO cpu | grep used_cpu
+
+# Network throughput
+redis-cli INFO stats | grep instantaneous_input_kbps
+redis-cli INFO stats | grep instantaneous_output_kbps
+
+# Slow queries
+echo "Recent slow queries:"
+redis-cli SLOWLOG GET 5
+
+# Hit rate
+HITS=$(redis-cli INFO stats | grep keyspace_hits | cut -d: -f2)
+MISSES=$(redis-cli INFO stats | grep keyspace_misses | cut -d: -f2)
+TOTAL=$((HITS + MISSES))
+if [ $TOTAL -gt 0 ]; then
+    HIT_RATE=$(echo "scale=2; ($HITS * 100) / $TOTAL" | bc)
+    echo "Hit rate: $HIT_RATE%"
+fi
+```
+
+## Performance Checklist
+
+- [ ] Use jemalloc memory allocator
+- [ ] Disable Transparent Huge Pages
+- [ ] Set appropriate maxmemory and eviction policy
+- [ ] Configure TCP backlog and kernel limits
+- [ ] Enable lazy freeing for large keys
+- [ ] Use pipelining and MGET/MSET
+- [ ] Avoid KEYS and other O(N) commands
+- [ ] Monitor and optimize slow queries
+- [ ] Disable swap
+- [ ] Enable I/O threading if needed
+- [ ] Set appropriate persistence options
+- [ ] Use SCAN instead of KEYS
+- [ ] Optimize data structures
+- [ ] Regular benchmarking and monitoring
+- [ ] Keep Redis updated
+
+## Troubleshooting Performance Issues
+
+### High Latency
+
+**Check:**
+```bash
+LATENCY DOCTOR
+SLOWLOG GET 10
+INFO stats | grep rejected_connections
+```
+
+**Solutions:**
+- Review slow queries
+- Check memory fragmentation
+- Verify network latency
+- Check CPU usage
+- Review persistence settings
+
+### High Memory Usage
+
+**Check:**
+```bash
+INFO memory
+MEMORY DOCTOR
+MEMORY STATS
+```
+
+**Solutions:**
+- Set maxmemory limit
+- Configure eviction policy
+- Optimize data structures
+- Check for memory leaks
+- Review key expiration
+
+### Low Throughput
+
+**Check:**
+```bash
+INFO stats | grep ops_per_sec
+INFO cpu
+```
+
+**Solutions:**
+- Enable I/O threading
+- Use pipelining
+- Optimize commands
+- Check network bandwidth
+- Review client connection pooling
+
+## See Also
+
+- [Configuration](/operations/configuration)
+- [Monitoring](/operations/monitoring)
+- [Backup and Restore](/operations/backup-restore)
+- [Redis Performance Optimization](https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/)

@@ -1,0 +1,445 @@
+---
+title: 'Creating Custom Data Types'
+description: 'Implement custom data types with persistence, replication, and AOF support'
+---
+
+Redis modules can define custom data types that integrate with Redis's persistence (RDB), replication, and AOF rewrite mechanisms. This allows you to create complex data structures that behave like native Redis types.
+
+## Data Type Overview
+
+Custom data types require implementing callbacks for:
+
+- **RDB Load/Save** - Persist data to RDB files
+- **AOF Rewrite** - Reconstruct data in AOF files
+- **Memory Usage** - Report memory consumption
+- **Free** - Release allocated memory
+- **Digest** - Generate checksums for debugging
+
+## Type Registration
+
+Register a custom type in `RedisModule_OnLoad`:
+
+```c
+RedisModuleType *MyType;
+
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (RedisModule_Init(ctx, "mytype", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    RedisModuleTypeMethods tm = {
+        .version = REDISMODULE_TYPE_METHOD_VERSION,
+        .rdb_load = MyTypeRdbLoad,
+        .rdb_save = MyTypeRdbSave,
+        .aof_rewrite = MyTypeAofRewrite,
+        .mem_usage = MyTypeMemUsage,
+        .free = MyTypeFree,
+        .digest = MyTypeDigest
+    };
+
+    MyType = RedisModule_CreateDataType(ctx, "mytype-ds", 0, &tm);
+    if (MyType == NULL) return REDISMODULE_ERR;
+
+    return REDISMODULE_OK;
+}
+```
+
+### Type Name Requirements
+
+The type name must be:
+- Exactly 9 characters (plus null terminator)
+- Include a dash separator
+- Be unique across all modules
+- Use format: `modulename-suffix`
+
+Example: `"mytype-ds"` or `"json-type"`
+
+## RedisModuleTypeMethods Structure
+
+```c
+typedef struct RedisModuleTypeMethods {
+    uint64_t version;
+    RedisModuleTypeLoadFunc rdb_load;
+    RedisModuleTypeSaveFunc rdb_save;
+    RedisModuleTypeRewriteFunc aof_rewrite;
+    RedisModuleTypeMemUsageFunc mem_usage;
+    RedisModuleTypeDigestFunc digest;
+    RedisModuleTypeFreeFunc free;
+    RedisModuleTypeAuxLoadFunc aux_load;
+    RedisModuleTypeAuxSaveFunc aux_save;
+    int aux_save_triggers;
+    RedisModuleTypeFreeEffortFunc free_effort;
+    RedisModuleTypeUnlinkFunc unlink;
+    RedisModuleTypeCopyFunc copy;
+    RedisModuleTypeDefragFunc defrag;
+    RedisModuleTypeMemUsageFunc2 mem_usage2;
+    RedisModuleTypeFreeEffortFunc2 free_effort2;
+    RedisModuleTypeUnlinkFunc2 unlink2;
+    RedisModuleTypeCopyFunc2 copy2;
+} RedisModuleTypeMethods;
+```
+
+Required callbacks:
+- `rdb_load` - Load data from RDB file
+- `rdb_save` - Save data to RDB file
+- `aof_rewrite` - Generate AOF rewrite commands
+- `mem_usage` - Calculate memory usage
+- `free` - Free allocated memory
+
+Optional callbacks:
+- `digest` - Generate digest for DEBUG DIGEST
+- `aux_load`/`aux_save` - Save auxiliary data
+- `free_effort` - Estimate free operation complexity
+- `unlink` - Async deletion
+- `copy` - Copy data for COPY command
+- `defrag` - Support active defragmentation
+
+## Example: Simple List Type
+
+Let's implement a simple linked list type:
+
+<Steps>
+  <Step title="Define the Data Structure">
+    ```c
+    typedef struct MyListNode {
+        struct MyListNode *next;
+        RedisModuleString *value;
+    } MyListNode;
+
+    typedef struct MyList {
+        MyListNode *head;
+        MyListNode *tail;
+        size_t len;
+    } MyList;
+    ```
+  </Step>
+
+  <Step title="Implement RDB Save">
+    ```c
+    void MyTypeRdbSave(RedisModuleIO *rdb, void *value) {
+        MyList *list = value;
+        
+        // Save the list length
+        RedisModule_SaveUnsigned(rdb, list->len);
+        
+        // Save each element
+        MyListNode *node = list->head;
+        while (node) {
+            RedisModule_SaveString(rdb, node->value);
+            node = node->next;
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Implement RDB Load">
+    ```c
+    void *MyTypeRdbLoad(RedisModuleIO *rdb, int encver) {
+        if (encver != 0) {
+            // Handle old versions if needed
+            return NULL;
+        }
+        
+        // Load the list length
+        uint64_t len = RedisModule_LoadUnsigned(rdb);
+        
+        // Create new list
+        MyList *list = RedisModule_Alloc(sizeof(MyList));
+        list->head = list->tail = NULL;
+        list->len = 0;
+        
+        // Load each element
+        for (uint64_t i = 0; i < len; i++) {
+            RedisModuleString *value = RedisModule_LoadString(rdb);
+            
+            MyListNode *node = RedisModule_Alloc(sizeof(MyListNode));
+            node->value = value;
+            node->next = NULL;
+            
+            if (list->tail) {
+                list->tail->next = node;
+                list->tail = node;
+            } else {
+                list->head = list->tail = node;
+            }
+            list->len++;
+        }
+        
+        return list;
+    }
+    ```
+  </Step>
+
+  <Step title="Implement AOF Rewrite">
+    ```c
+    void MyTypeAofRewrite(RedisModuleIO *aof, RedisModuleString *key, void *value) {
+        MyList *list = value;
+        MyListNode *node = list->head;
+        
+        // Emit commands to reconstruct the list
+        while (node) {
+            RedisModule_EmitAOF(aof, "MYLIST.PUSH", "ss", key, node->value);
+            node = node->next;
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Implement Memory Usage">
+    ```c
+    size_t MyTypeMemUsage(const void *value) {
+        const MyList *list = value;
+        size_t mem = sizeof(MyList);
+        
+        MyListNode *node = list->head;
+        while (node) {
+            mem += sizeof(MyListNode);
+            mem += RedisModule_MallocSizeString(node->value);
+            node = node->next;
+        }
+        
+        return mem;
+    }
+    ```
+  </Step>
+
+  <Step title="Implement Free">
+    ```c
+    void MyTypeFree(void *value) {
+        MyList *list = value;
+        
+        MyListNode *node = list->head;
+        while (node) {
+            MyListNode *next = node->next;
+            RedisModule_FreeString(NULL, node->value);
+            RedisModule_Free(node);
+            node = next;
+        }
+        
+        RedisModule_Free(list);
+    }
+    ```
+  </Step>
+
+  <Step title="Implement Digest (Optional)">
+    ```c
+    void MyTypeDigest(RedisModuleDigest *md, void *value) {
+        MyList *list = value;
+        MyListNode *node = list->head;
+        
+        while (node) {
+            size_t len;
+            const char *str = RedisModule_StringPtrLen(node->value, &len);
+            RedisModule_DigestAddStringBuffer(md, str, len);
+            node = node->next;
+        }
+        
+        RedisModule_DigestEndSequence(md);
+    }
+    ```
+  </Step>
+</Steps>
+
+## Setting Type Values
+
+Use `RedisModule_ModuleTypeSetValue` to store your data:
+
+```c
+int MyListPush_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc != 3) return RedisModule_WrongArity(ctx);
+    
+    RedisModule_AutoMemory(ctx);
+    
+    // Open key for writing
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_WRITE);
+    int keytype = RedisModule_KeyType(key);
+    
+    MyList *list;
+    
+    if (keytype == REDISMODULE_KEYTYPE_EMPTY) {
+        // Create new list
+        list = RedisModule_Alloc(sizeof(MyList));
+        list->head = list->tail = NULL;
+        list->len = 0;
+        RedisModule_ModuleTypeSetValue(key, MyType, list);
+    } else if (RedisModule_ModuleTypeGetType(key) == MyType) {
+        // Get existing list
+        list = RedisModule_ModuleTypeGetValue(key);
+    } else {
+        return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+    }
+    
+    // Add element
+    MyListNode *node = RedisModule_Alloc(sizeof(MyListNode));
+    node->value = argv[2];
+    RedisModule_RetainString(ctx, node->value);
+    node->next = NULL;
+    
+    if (list->tail) {
+        list->tail->next = node;
+        list->tail = node;
+    } else {
+        list->head = list->tail = node;
+    }
+    list->len++;
+    
+    RedisModule_ReplicateVerbatim(ctx);
+    return RedisModule_ReplyWithLongLong(ctx, list->len);
+}
+```
+
+## Getting Type Values
+
+Retrieve your data with `RedisModule_ModuleTypeGetValue`:
+
+```c
+int MyListLen_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc != 2) return RedisModule_WrongArity(ctx);
+    
+    RedisModule_AutoMemory(ctx);
+    
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ);
+    int keytype = RedisModule_KeyType(key);
+    
+    if (keytype == REDISMODULE_KEYTYPE_EMPTY) {
+        return RedisModule_ReplyWithLongLong(ctx, 0);
+    }
+    
+    if (RedisModule_ModuleTypeGetType(key) != MyType) {
+        return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+    }
+    
+    MyList *list = RedisModule_ModuleTypeGetValue(key);
+    return RedisModule_ReplyWithLongLong(ctx, list->len);
+}
+```
+
+## Encoding Versions
+
+Support multiple encoding versions for backward compatibility:
+
+```c
+RedisModuleType *MyType;
+#define MYTYPE_ENCODING_VERSION 2
+
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    MyType = RedisModule_CreateDataType(ctx, "mytype-ds", 
+                                        MYTYPE_ENCODING_VERSION, &tm);
+    return REDISMODULE_OK;
+}
+
+void *MyTypeRdbLoad(RedisModuleIO *rdb, int encver) {
+    if (encver == 0) {
+        // Load old format
+        return LoadOldFormat(rdb);
+    } else if (encver == 1) {
+        // Load version 1 format
+        return LoadV1Format(rdb);
+    } else if (encver == 2) {
+        // Load current format
+        return LoadV2Format(rdb);
+    }
+    return NULL;
+}
+```
+
+## Best Practices
+
+<Warning>
+**Memory Management**
+
+Always use `RedisModule_Alloc`, `RedisModule_Free`, and related functions. Never use standard `malloc`/`free` as Redis won't track the memory usage.
+</Warning>
+
+<Warning>
+**String References**
+
+When storing `RedisModuleString` pointers, use `RedisModule_RetainString` to increment the reference count, and free with `RedisModule_FreeString(NULL, str)`.
+</Warning>
+
+<Warning>
+**Replication**
+
+Always call `RedisModule_ReplicateVerbatim(ctx)` or `RedisModule_Replicate()` after modifying data to ensure changes propagate to replicas.
+</Warning>
+
+### Error Checking
+
+Always check for errors during RDB load:
+
+```c
+void *MyTypeRdbLoad(RedisModuleIO *rdb, int encver) {
+    if (RedisModule_IsIOError(rdb)) return NULL;
+    
+    uint64_t len = RedisModule_LoadUnsigned(rdb);
+    if (RedisModule_IsIOError(rdb)) return NULL;
+    
+    // ... continue loading
+}
+```
+
+### Auxiliary Data
+
+Store module-wide metadata using auxiliary data callbacks:
+
+```c
+void MyTypeAuxSave(RedisModuleIO *rdb, int when) {
+    if (when == REDISMODULE_AUX_BEFORE_RDB) {
+        RedisModule_SaveUnsigned(rdb, module_config_version);
+    }
+}
+
+int MyTypeAuxLoad(RedisModuleIO *rdb, int encver, int when) {
+    if (when == REDISMODULE_AUX_BEFORE_RDB) {
+        module_config_version = RedisModule_LoadUnsigned(rdb);
+    }
+    return REDISMODULE_OK;
+}
+
+// In RedisModule_OnLoad:
+RedisModuleTypeMethods tm = {
+    .version = REDISMODULE_TYPE_METHOD_VERSION,
+    .aux_save = MyTypeAuxSave,
+    .aux_load = MyTypeAuxLoad,
+    .aux_save_triggers = REDISMODULE_AUX_BEFORE_RDB,
+    // ... other callbacks
+};
+```
+
+## Testing Custom Types
+
+Test persistence:
+
+```bash
+# Add data
+redis-cli MYLIST.PUSH mykey value1
+redis-cli MYLIST.PUSH mykey value2
+
+# Save and restart
+redis-cli SAVE
+redis-cli SHUTDOWN
+redis-server --loadmodule ./mymodule.so
+
+# Verify data persisted
+redis-cli MYLIST.LEN mykey
+```
+
+Test replication:
+
+```bash
+# On master
+redis-cli MYLIST.PUSH mykey value1
+
+# On replica
+redis-cli -p 6380 MYLIST.LEN mykey  # Should return 1
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module Commands" icon="terminal" href="/modules/commands">
+    Learn advanced command registration techniques
+  </Card>
+  <Card title="Built-in Modules" icon="puzzle-piece" href="/modules/built-in-modules">
+    See real-world examples of custom types
+  </Card>
+</CardGroup>

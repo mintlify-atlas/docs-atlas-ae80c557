@@ -1,122 +1,138 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Redis",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#DC382D",
+    "light": "#FF6B6B",
+    "dark": "#A81F17"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/redis/redis"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/redis/redis"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/architecture",
+              "concepts/data-persistence",
+              "concepts/memory-management",
+              "concepts/replication",
+              "concepts/clustering"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Data Types",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "data-types/overview",
+              "data-types/strings",
+              "data-types/lists",
+              "data-types/sets",
+              "data-types/sorted-sets",
+              "data-types/hashes",
+              "data-types/streams",
+              "data-types/json",
+              "data-types/bitmaps",
+              "data-types/hyperloglogs",
+              "data-types/geospatial"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced Features",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "features/pubsub",
+              "features/transactions",
+              "features/lua-scripting",
+              "features/query-engine",
+              "features/vector-search",
+              "features/time-series",
+              "features/probabilistic"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/security",
+              "operations/monitoring",
+              "operations/backup-restore",
+              "operations/performance-tuning",
+              "operations/tls"
+            ]
+          },
+          {
+            "group": "Client Libraries",
+            "pages": [
+              "clients/overview",
+              "clients/python",
+              "clients/javascript",
+              "clients/java",
+              "clients/go",
+              "clients/dotnet"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Commands",
             "pages": [
-              "api-reference/introduction"
+              "commands/overview",
+              "commands/generic",
+              "commands/strings",
+              "commands/lists",
+              "commands/sets",
+              "commands/sorted-sets",
+              "commands/hashes",
+              "commands/streams",
+              "commands/pubsub",
+              "commands/server",
+              "commands/cluster",
+              "commands/scripting"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Modules API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "modules/overview",
+              "modules/getting-started",
+              "modules/data-types",
+              "modules/commands",
+              "modules/built-in-modules"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "protocol/resp-protocol",
+              "protocol/pipelining",
+              "protocol/client-protocol"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

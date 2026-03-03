@@ -1,0 +1,399 @@
+---
+title: 'Transactions'
+description: 'Execute multiple commands atomically with MULTI/EXEC and optimistic locking with WATCH'
+---
+
+Redis transactions allow you to execute a group of commands as a single isolated operation. All commands in a transaction are serialized and executed sequentially, ensuring atomicity.
+
+## Overview
+
+Redis transactions provide:
+
+- **Atomicity**: All commands execute as a single unit
+- **Isolation**: No other client commands are served during execution
+- **Sequential Execution**: Commands execute in the order they were queued
+
+<Warning>
+Redis transactions do NOT provide rollback. If a command fails during execution, subsequent commands will still execute.
+</Warning>
+
+## MULTI/EXEC Basics
+
+Transactions are defined using `MULTI` to start queuing commands and `EXEC` to execute them.
+
+### Basic Transaction
+
+<Steps>
+
+<Step title="Start transaction">
+Begin queuing commands:
+
+```bash
+MULTI
+```
+
+Redis responds with `OK`. All subsequent commands are queued, not executed.
+</Step>
+
+<Step title="Queue commands">
+Add commands to the transaction queue:
+
+```bash
+SET user:1000:name "Alice"
+INCR user:1000:visits
+SADD user:1000:tags "active" "premium"
+```
+
+Each command responds with `QUEUED`.
+</Step>
+
+<Step title="Execute transaction">
+Execute all queued commands atomically:
+
+```bash
+EXEC
+```
+
+Returns an array with the results of each command:
+
+```
+1) OK
+2) (integer) 1
+3) (integer) 2
+```
+</Step>
+
+</Steps>
+
+### Complete Example
+
+```bash
+# Transfer credits between users
+MULTI
+DECRBY user:1000:credits 100
+INCRBY user:2000:credits 100
+EXEC
+
+# Result:
+1) (integer) 900  # user:1000:credits after decrement
+2) (integer) 1100 # user:2000:credits after increment
+```
+
+## DISCARD
+
+Cancel a transaction and clear the command queue:
+
+```bash
+MULTI
+SET key1 value1
+SET key2 value2
+DISCARD  # Cancel the transaction
+
+# No commands were executed
+```
+
+Use `DISCARD` when you need to abort a transaction before execution.
+
+## Error Handling
+
+Redis distinguishes between two types of errors:
+
+### Command Queuing Errors
+
+Errors detected before `EXEC` (syntax errors, wrong number of arguments):
+
+```bash
+MULTI
+SET key1 value1
+SET key1  # Wrong number of arguments
+SET key2 value2
+EXEC
+
+# Returns error:
+(error) EXECABORT Transaction discarded because of previous errors
+```
+
+The entire transaction is discarded and no commands execute.
+
+### Command Execution Errors
+
+Errors during `EXEC` (type errors, operation on wrong data type):
+
+```bash
+SET mystring "hello"
+
+MULTI
+INCR mystring  # Will fail - string is not an integer
+SET mykey "value"
+EXEC
+
+# Returns:
+1) (error) ERR value is not an integer or out of range
+2) OK
+```
+
+<Warning>
+Commands that fail during execution don't prevent subsequent commands from running. Redis does not support rollback.
+</Warning>
+
+## Optimistic Locking with WATCH
+
+`WATCH` provides check-and-set (CAS) behavior for implementing optimistic locking.
+
+### How WATCH Works
+
+<Steps>
+
+<Step title="Watch keys">
+Mark keys to monitor for changes:
+
+```bash
+WATCH user:1000:balance
+```
+</Step>
+
+<Step title="Read and compute">
+Read the current value and perform calculations:
+
+```bash
+GET user:1000:balance
+# Returns: "1000"
+
+# Client-side: new_balance = 1000 - 100 = 900
+```
+</Step>
+
+<Step title="Execute conditional transaction">
+Execute the transaction only if watched keys weren't modified:
+
+```bash
+MULTI
+SET user:1000:balance 900
+EXEC
+```
+
+If any watched key was modified by another client between `WATCH` and `EXEC`, the transaction is aborted and `EXEC` returns `nil`.
+</Step>
+
+</Steps>
+
+### WATCH Example: Atomic Transfer
+
+```bash
+# Safe implementation of balance transfer
+WATCH user:1000:balance user:2000:balance
+
+# Check if user:1000 has sufficient balance
+GET user:1000:balance
+# Returns: "1000"
+
+# Calculate new balances
+# new_balance_1000 = 1000 - 100 = 900
+# new_balance_2000 = current + 100
+
+GET user:2000:balance
+# Returns: "500"
+# new_balance_2000 = 500 + 100 = 600
+
+MULTI
+SET user:1000:balance 900
+SET user:2000:balance 600
+EXEC
+
+# If successful: array of OK responses
+# If keys were modified: (nil)
+```
+
+### UNWATCH
+
+Cancel all watched keys:
+
+```bash
+WATCH key1 key2
+# Changed my mind...
+UNWATCH
+
+# Now key1 and key2 are no longer watched
+```
+
+<Note>
+`EXEC` automatically calls `UNWATCH` after execution. `DISCARD` also cancels all watches.
+</Note>
+
+## Handling WATCH Failures
+
+When `EXEC` returns `nil` due to a watched key modification, implement retry logic:
+
+```python
+import redis
+
+r = redis.Redis()
+
+def transfer_credits(from_user, to_user, amount):
+    max_retries = 10
+    
+    for attempt in range(max_retries):
+        try:
+            # Watch both accounts
+            pipe = r.pipeline()
+            pipe.watch(f'user:{from_user}:balance', f'user:{to_user}:balance')
+            
+            # Get current balances
+            from_balance = int(r.get(f'user:{from_user}:balance') or 0)
+            to_balance = int(r.get(f'user:{to_user}:balance') or 0)
+            
+            # Verify sufficient funds
+            if from_balance < amount:
+                pipe.unwatch()
+                raise ValueError("Insufficient balance")
+            
+            # Execute transaction
+            pipe.multi()
+            pipe.set(f'user:{from_user}:balance', from_balance - amount)
+            pipe.set(f'user:{to_user}:balance', to_balance + amount)
+            pipe.execute()
+            
+            return True
+        except redis.WatchError:
+            # Retry on conflict
+            continue
+    
+    raise Exception("Transaction failed after max retries")
+```
+
+## Pipeline vs Transaction
+
+**Pipelines** batch commands for network efficiency:
+
+```bash
+# Pipeline (no atomicity guarantee)
+SET key1 value1
+SET key2 value2
+INCR counter
+```
+
+**Transactions** provide atomic execution:
+
+```bash
+# Transaction (atomic)
+MULTI
+SET key1 value1
+SET key2 value2
+INCR counter
+EXEC
+```
+
+You can combine both for atomic execution with network efficiency:
+
+```python
+pipe = r.pipeline()
+pipe.multi()  # Start transaction
+pipe.set('key1', 'value1')
+pipe.set('key2', 'value2')
+pipe.incr('counter')
+pipe.execute()  # Send all commands at once and execute atomically
+```
+
+## Use Cases
+
+### Atomic Counter Updates
+
+```bash
+# Update multiple counters atomically
+MULTI
+INCR page:views
+INCR page:unique_visitors
+SADD page:visitor_ips "192.168.1.1"
+EXEC
+```
+
+### Consistent Data Updates
+
+```bash
+# Update user profile and index atomically
+MULTI
+HSET user:1000 name "Alice" email "alice@example.com"
+SADD email:index:alice@example.com 1000
+ZADD users:by_name 0 "Alice:1000"
+EXEC
+```
+
+### Conditional Writes with WATCH
+
+```bash
+# Only increment if current value is below threshold
+WATCH counter
+GET counter
+# Suppose it returns "95"
+
+# Client checks: if value < 100, increment
+MULTI
+INCR counter
+EXEC
+```
+
+## Transaction Characteristics
+
+### Guarantees
+
+✅ **All commands execute sequentially**  
+✅ **No other client requests served mid-transaction**  
+✅ **All or nothing queuing** (queuing errors abort transaction)  
+✅ **WATCH provides optimistic locking**
+
+### Limitations
+
+❌ **No rollback on execution errors**  
+❌ **Cannot use returned values in subsequent commands** (use Lua scripts for this)  
+❌ **No nested transactions**  
+❌ **Commands are queued, not validated until EXEC**
+
+## Best Practices
+
+1. **Keep transactions small**: Large transactions hold locks longer
+2. **Use WATCH for conditional updates**: Implement optimistic locking patterns
+3. **Handle WATCH failures**: Implement retry logic with backoff
+4. **Avoid blocking commands**: Don't use `BLPOP`, `BRPOP`, etc. in transactions
+5. **Consider Lua scripts**: For complex logic requiring conditional execution based on data values
+
+<Note>
+For complex transactional logic that requires branching based on data values, consider using [Lua scripting](/features/lua-scripting) instead, which executes atomically and can access intermediate results.
+</Note>
+
+## Common Patterns
+
+### Increment with Maximum
+
+```bash
+WATCH counter
+GET counter
+# If current value < max, increment
+
+MULTI
+INCR counter
+EXPIRE counter 3600
+EXEC
+```
+
+### Update with Audit Trail
+
+```bash
+MULTI
+SET data:current "new_value"
+LPUSH data:history "new_value"
+LTRIM data:history 0 99
+EXEC
+```
+
+### Atomic Flag and Execute
+
+```bash
+WATCH lock:resource
+GET lock:resource
+# If lock doesn't exist
+
+MULTI
+SETEX lock:resource 30 "locked"
+SET resource:data "updated"
+EXEC
+```

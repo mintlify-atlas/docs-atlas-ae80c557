@@ -1,0 +1,405 @@
+---
+title: JavaScript Client (node-redis)
+description: Connect to Redis from Node.js using node-redis, the official JavaScript client
+---
+
+The official Node.js client for Redis is **node-redis**. It provides a modern, promise-based API with full support for Redis commands, data types, and advanced features including pipelining, pub/sub, and Redis modules.
+
+## Installation
+
+Install node-redis using your preferred package manager:
+
+<CodeGroup>
+```bash npm
+npm install redis
+```
+
+```bash yarn
+yarn add redis
+```
+
+```bash pnpm
+pnpm add redis
+```
+</CodeGroup>
+
+## Quick Start
+
+<Steps>
+  <Step title="Import and connect">
+    Create a connection to your Redis server:
+    
+    ```javascript
+    import { createClient } from 'redis';
+    
+    // Create and connect to Redis
+    const client = createClient({
+      url: 'redis://localhost:6379'
+    });
+    
+    client.on('error', (err) => console.error('Redis Client Error', err));
+    
+    await client.connect();
+    console.log('Connected to Redis!');
+    ```
+    
+    <Tip>
+      node-redis v4+ requires explicit connection with `await client.connect()`. Earlier versions connected automatically.
+    </Tip>
+  </Step>
+  
+  <Step title="Perform basic operations">
+    Use Redis commands with async/await:
+    
+    ```javascript
+    // SET and GET operations
+    await client.set('user:1:name', 'Alice');
+    const name = await client.get('user:1:name');
+    console.log(`Name: ${name}`);  // Output: Name: Alice
+    
+    // Work with numbers
+    await client.set('counter', '0');
+    await client.incr('counter');
+    await client.incrBy('counter', 5);
+    const count = await client.get('counter');
+    console.log(`Counter: ${count}`);  // Output: Counter: 6
+    
+    // Expiration
+    await client.setEx('session:abc', 3600, 'session_data');  // Expires in 1 hour
+    ```
+  </Step>
+  
+  <Step title="Handle errors and cleanup">
+    Implement proper error handling and connection cleanup:
+    
+    ```javascript
+    import { createClient } from 'redis';
+    
+    async function main() {
+      const client = createClient({
+        url: 'redis://localhost:6379',
+        socket: {
+          connectTimeout: 5000,
+          reconnectStrategy: (retries) => {
+            if (retries > 10) {
+              return new Error('Max retries reached');
+            }
+            return Math.min(retries * 100, 3000);
+          }
+        }
+      });
+      
+      client.on('error', (err) => {
+        console.error('Redis error:', err);
+      });
+      
+      try {
+        await client.connect();
+        
+        // Perform operations
+        await client.set('key', 'value');
+        const value = await client.get('key');
+        console.log(value);
+        
+      } catch (error) {
+        console.error('Error:', error);
+      } finally {
+        await client.quit();
+      }
+    }
+    
+    main();
+    ```
+  </Step>
+</Steps>
+
+## Connection Patterns
+
+### Basic Connection
+
+```javascript
+import { createClient } from 'redis';
+
+const client = createClient({
+  url: 'redis://localhost:6379'
+});
+
+await client.connect();
+```
+
+### Secure TLS Connections
+
+Connect to Redis with TLS encryption:
+
+```javascript
+import { createClient } from 'redis';
+import fs from 'fs';
+
+const client = createClient({
+  url: 'rediss://your-redis-host.com:6380',  // Note: rediss:// for TLS
+  password: 'your-password',
+  socket: {
+    tls: true,
+    rejectUnauthorized: true,
+    ca: fs.readFileSync('/path/to/ca.crt')
+  }
+});
+
+await client.connect();
+```
+
+### Redis Cloud Connection
+
+Connect to Redis Cloud:
+
+```javascript
+import { createClient } from 'redis';
+
+const client = createClient({
+  url: 'rediss://your-endpoint.redis.cloud:12345',
+  password: 'your-password'
+});
+
+await client.connect();
+```
+
+### Connection Events
+
+Handle connection lifecycle events:
+
+```javascript
+client.on('connect', () => console.log('Connecting...'));
+client.on('ready', () => console.log('Client ready'));
+client.on('error', (err) => console.error('Error:', err));
+client.on('reconnecting', () => console.log('Reconnecting...'));
+client.on('end', () => console.log('Connection closed'));
+```
+
+## Working with Data Structures
+
+### Hashes
+
+```javascript
+// Store user data as a hash
+await client.hSet('user:1', {
+  name: 'Alice',
+  email: 'alice@example.com',
+  age: '30'
+});
+
+// Get specific field
+const name = await client.hGet('user:1', 'name');
+
+// Get all fields
+const user = await client.hGetAll('user:1');
+console.log(user);  // { name: 'Alice', email: 'alice@example.com', age: '30' }
+
+// Increment numeric field
+await client.hIncrBy('user:1', 'age', 1);
+```
+
+### Lists
+
+```javascript
+// Add items to a list
+await client.rPush('queue', ['task1', 'task2', 'task3']);
+
+// Get list length
+const length = await client.lLen('queue');
+
+// Pop item from list
+const task = await client.lPop('queue');
+console.log(task);  // task1
+
+// Get range of items
+const tasks = await client.lRange('queue', 0, -1);
+```
+
+### Sets
+
+```javascript
+// Add members to a set
+await client.sAdd('tags', ['python', 'redis', 'database']);
+
+// Check membership
+const isMember = await client.sIsMember('tags', 'python');  // true
+
+// Get all members
+const tags = await client.sMembers('tags');
+
+// Set operations
+await client.sAdd('tags2', ['redis', 'cache', 'nosql']);
+const common = await client.sInter(['tags', 'tags2']);  // ['redis']
+```
+
+### Sorted Sets
+
+```javascript
+// Add scored members
+await client.zAdd('leaderboard', [
+  { score: 100, value: 'alice' },
+  { score: 150, value: 'bob' },
+  { score: 120, value: 'charlie' }
+]);
+
+// Get top scores (descending)
+const topPlayers = await client.zRangeWithScores('leaderboard', 0, 2, {
+  REV: true
+});
+// [{ value: 'bob', score: 150 }, { value: 'charlie', score: 120 }, { value: 'alice', score: 100 }]
+
+// Get rank
+const rank = await client.zRevRank('leaderboard', 'alice');  // 2 (0-indexed)
+
+// Increment score
+await client.zIncrBy('leaderboard', 25, 'alice');
+```
+
+## Advanced Features
+
+### Pipelining
+
+Batch multiple commands for better performance:
+
+```javascript
+// Commands are automatically pipelined
+const results = await Promise.all([
+  client.set('key1', 'value1'),
+  client.set('key2', 'value2'),
+  client.incr('counter'),
+  client.get('key1')
+]);
+
+console.log(results);  // ['OK', 'OK', 1, 'value1']
+```
+
+### Multi/Exec Transactions
+
+Execute commands atomically:
+
+```javascript
+const multi = client.multi();
+
+multi.set('key1', 'value1');
+multi.set('key2', 'value2');
+multi.incr('counter');
+multi.get('key1');
+
+const results = await multi.exec();
+console.log(results);  // ['OK', 'OK', 1, 'value1']
+```
+
+### Watch for Optimistic Locking
+
+```javascript
+async function transferFunds(fromKey, toKey, amount) {
+  const watch = await client.watch(fromKey);
+  
+  try {
+    const balance = parseInt(await client.get(fromKey) || '0');
+    
+    if (balance < amount) {
+      await client.unwatch();
+      throw new Error('Insufficient balance');
+    }
+    
+    const multi = client.multi();
+    multi.decrBy(fromKey, amount);
+    multi.incrBy(toKey, amount);
+    
+    await multi.exec();
+    console.log('Transfer successful');
+  } catch (error) {
+    console.error('Transfer failed:', error);
+  }
+}
+```
+
+### Pub/Sub
+
+Implement publish/subscribe messaging:
+
+```javascript
+import { createClient } from 'redis';
+
+// Create separate clients for pub and sub
+const subscriber = createClient();
+const publisher = createClient();
+
+await subscriber.connect();
+await publisher.connect();
+
+// Subscribe to a channel
+await subscriber.subscribe('notifications', (message) => {
+  console.log(`Received: ${message}`);
+});
+
+// Publish a message
+await publisher.publish('notifications', 'Hello, Redis!');
+
+// Pattern subscription
+await subscriber.pSubscribe('user:*', (message, channel) => {
+  console.log(`Channel ${channel}: ${message}`);
+});
+```
+
+### Scan for Large Datasets
+
+Iterate through keys efficiently:
+
+```javascript
+// Scan all keys matching a pattern
+for await (const key of client.scanIterator({
+  MATCH: 'user:*',
+  COUNT: 100
+})) {
+  console.log(key);
+  const value = await client.get(key);
+  // Process each key
+}
+```
+
+## TypeScript Support
+
+node-redis includes full TypeScript definitions:
+
+```typescript
+import { createClient, RedisClientType } from 'redis';
+
+const client: RedisClientType = createClient({
+  url: 'redis://localhost:6379'
+});
+
+await client.connect();
+
+// Type-safe operations
+const value: string | null = await client.get('key');
+const count: number = await client.incr('counter');
+```
+
+## Starter Project
+
+<Card 
+  title="Redis JavaScript Starter Project" 
+  icon="github" 
+  href="https://github.com/redis-developer/redis-starter-js"
+>
+  Clone the official starter project to get up and running quickly with complete examples and best practices.
+</Card>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="node-redis Documentation" icon="book" href="https://redis.io/docs/latest/develop/clients/nodejs/">
+    Official node-redis documentation
+  </Card>
+  <Card title="Redis Commands" icon="terminal" href="https://redis.io/commands/">
+    Complete Redis command reference
+  </Card>
+  <Card title="Data Types Guide" icon="database" href="https://redis.io/docs/latest/develop/data-types/">
+    Learn about Redis data structures
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/redis/node-redis">
+    node-redis source code and issues
+  </Card>
+</CardGroup>

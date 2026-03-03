@@ -1,0 +1,487 @@
+---
+title: "Cluster Commands"
+description: "Commands for Redis Cluster management and operations"
+---
+
+Redis Cluster provides automatic sharding across multiple Redis nodes, enabling horizontal scalability and high availability.
+
+## CLUSTER NODES
+
+Returns the cluster configuration for a node.
+
+### Syntax
+
+```bash
+CLUSTER NODES
+```
+
+<ResponseField name="nodes" type="string">
+  Configuration information for all cluster nodes, one line per node. Format:
+  `<id> <ip:port@cport> <flags> <master> <ping-sent> <pong-recv> <config-epoch> <link-state> <slot> <slot> ... <slot>`
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the total number of cluster nodes.
+
+### Examples
+
+```bash
+redis> CLUSTER NODES
+07c37dfeb235213a872192d90877d0cd55635b91 127.0.0.1:7000@17000 myself,master - 0 0 1 connected 0-5460
+67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1 127.0.0.1:7002@17002 master - 0 1640000000 3 connected 10923-16383
+e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:7001@17001 master - 0 1640000001 2 connected 5461-10922
+```
+
+## CLUSTER SLOTS
+
+Returns the mapping of cluster slots to nodes.
+
+### Syntax
+
+```bash
+CLUSTER SLOTS
+```
+
+<ResponseField name="slots" type="array">
+  Array of slot ranges with their assigned nodes. Each entry contains:
+  - Start slot
+  - End slot
+  - Master node [IP, port, node ID]
+  - Replica nodes (if any)
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the total number of cluster nodes.
+
+**History:**
+- **4.0.0**: Added node IDs.
+- **7.0.0**: Added additional networking metadata field.
+
+<Warning>
+CLUSTER SLOTS is deprecated. Use CLUSTER SHARDS instead for newer Redis versions (7.0+).
+</Warning>
+
+### Examples
+
+```bash
+redis> CLUSTER SLOTS
+1) 1) (integer) 0
+   2) (integer) 5460
+   3) 1) "127.0.0.1"
+      2) (integer) 7000
+      3) "07c37dfeb235213a872192d90877d0cd55635b91"
+2) 1) (integer) 5461
+   2) (integer) 10922
+   3) 1) "127.0.0.1"
+      2) (integer) 7001
+      3) "e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca"
+3) 1) (integer) 10923
+   2) (integer) 16383
+   3) 1) "127.0.0.1"
+      2) (integer) 7002
+      3) "67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1"
+```
+
+## CLUSTER INFO
+
+Returns information about the cluster state.
+
+### Syntax
+
+```bash
+CLUSTER INFO
+```
+
+<ResponseField name="info" type="string">
+  Cluster state information in key:value format.
+</ResponseField>
+
+**Time Complexity:** O(1)
+
+### Examples
+
+```bash
+redis> CLUSTER INFO
+cluster_state:ok
+cluster_slots_assigned:16384
+cluster_slots_ok:16384
+cluster_slots_pfail:0
+cluster_slots_fail:0
+cluster_known_nodes:3
+cluster_size:3
+cluster_current_epoch:3
+cluster_my_epoch:1
+cluster_stats_messages_sent:1000
+cluster_stats_messages_received:1000
+```
+
+## Related Commands
+
+### Additional Cluster Commands
+
+- **CLUSTER MEET**: Add node to cluster
+- **CLUSTER FORGET**: Remove node from cluster
+- **CLUSTER REPLICATE**: Configure node as replica
+- **CLUSTER ADDSLOTS**: Assign slots to node
+- **CLUSTER DELSLOTS**: Remove slot assignments
+- **CLUSTER SETSLOT**: Set slot state
+- **CLUSTER FAILOVER**: Manual failover
+- **CLUSTER RESET**: Reset cluster configuration
+- **CLUSTER SAVECONFIG**: Save cluster config to disk
+- **CLUSTER KEYSLOT**: Get slot for key
+- **CLUSTER COUNTKEYSINSLOT**: Count keys in slot
+- **CLUSTER GETKEYSINSLOT**: Get keys in slot
+- **CLUSTER MYID**: Get node ID
+- **CLUSTER REPLICAS**: List node replicas
+- **CLUSTER SHARDS**: Get cluster shards info (7.0+)
+- **CLUSTER LINKS**: Get cluster node links
+- **CLUSTER BUMPEPOCH**: Advance cluster epoch
+
+## Use Cases
+
+### Cluster Monitoring
+
+Monitor cluster health:
+
+```bash
+# Check cluster state
+redis> CLUSTER INFO
+cluster_state:ok
+
+# List all nodes
+redis> CLUSTER NODES
+# Shows all nodes and their states
+
+# Check slot distribution
+redis> CLUSTER SLOTS
+# Shows slot assignments
+```
+
+### Adding Nodes
+
+Expand cluster capacity:
+
+```bash
+# Add new node to cluster
+redis> CLUSTER MEET 127.0.0.1 7003
+OK
+
+# Verify node was added
+redis> CLUSTER NODES
+# New node appears in list
+
+# Assign slots to new node
+redis> CLUSTER ADDSLOTS 0 1 2 3 4 5
+OK
+```
+
+### Slot Management
+
+Manage hash slot distribution:
+
+```bash
+# Get slot for a key
+redis> CLUSTER KEYSLOT mykey
+(integer) 14687
+
+# Count keys in slot
+redis> CLUSTER COUNTKEYSINSLOT 14687
+(integer) 5
+
+# Get keys in slot
+redis> CLUSTER GETKEYSINSLOT 14687 10
+1) "mykey"
+2) "anotherkey"
+```
+
+### Failover Management
+
+Handle node failures:
+
+```bash
+# Manual failover from replica
+redis> CLUSTER FAILOVER
+OK
+
+# Force failover (use with caution)
+redis> CLUSTER FAILOVER FORCE
+OK
+
+# Check new master
+redis> CLUSTER NODES
+# Shows new master node
+```
+
+### Replication Setup
+
+Configure replicas:
+
+```bash
+# Make current node replica of master
+redis> CLUSTER REPLICATE 07c37dfeb235213a872192d90877d0cd55635b91
+OK
+
+# List replicas of a master
+redis> CLUSTER REPLICAS 07c37dfeb235213a872192d90877d0cd55635b91
+1) "replica1:port@cport ..."
+2) "replica2:port@cport ..."
+```
+
+## Best Practices
+
+### Cluster Design
+
+1. **Minimum Nodes**: Use at least 6 nodes (3 masters + 3 replicas)
+2. **Slot Distribution**: Distribute slots evenly across masters
+3. **Replica Placement**: Place replicas on different physical machines
+4. **Network**: Use low-latency network connections
+
+### Monitoring
+
+<Tabs>
+  <Tab title="Health Checks">
+    Regular health monitoring:
+    
+    ```bash
+    # Check cluster state
+    redis> CLUSTER INFO
+    cluster_state:ok
+    
+    # Verify all slots assigned
+    redis> CLUSTER INFO | grep cluster_slots_assigned
+    cluster_slots_assigned:16384
+    
+    # Check for failing nodes
+    redis> CLUSTER NODES | grep fail
+    ```
+  </Tab>
+  
+  <Tab title="Performance">
+    Monitor performance:
+    
+    ```bash
+    # Check message stats
+    redis> CLUSTER INFO | grep messages
+    cluster_stats_messages_sent:1000000
+    cluster_stats_messages_received:1000000
+    
+    # Monitor node links
+    redis> CLUSTER LINKS
+    # Shows connection health
+    ```
+  </Tab>
+</Tabs>
+
+### Maintenance
+
+1. Save config regularly:
+   ```bash
+   redis> CLUSTER SAVECONFIG
+   OK
+   ```
+
+2. Document slot assignments
+3. Monitor epoch progression
+4. Test failover procedures
+
+## Patterns
+
+### Resharding
+
+Move slots between nodes:
+
+```bash
+# Set slot as migrating on source
+redis> CLUSTER SETSLOT 100 MIGRATING target-node-id
+OK
+
+# Set slot as importing on target
+redis> CLUSTER SETSLOT 100 IMPORTING source-node-id
+OK
+
+# Migrate keys
+redis> MIGRATE target-host target-port "" 0 5000 KEYS key1 key2
+OK
+
+# Complete migration
+redis> CLUSTER SETSLOT 100 NODE target-node-id
+OK
+```
+
+### Cluster Setup
+
+Initialize a new cluster:
+
+```bash
+# Start nodes
+# redis-server --port 7000 --cluster-enabled yes
+# redis-server --port 7001 --cluster-enabled yes
+# redis-server --port 7002 --cluster-enabled yes
+
+# Create cluster using redis-cli
+# redis-cli --cluster create 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002
+
+# Or manually:
+redis> CLUSTER MEET 127.0.0.1 7001
+OK
+redis> CLUSTER MEET 127.0.0.1 7002
+OK
+redis> CLUSTER ADDSLOTS 0-5460
+OK
+```
+
+### Node Removal
+
+Safely remove node:
+
+```bash
+# Resharding (move all slots away)
+redis> CLUSTER SETSLOT <slot> NODE <target-node>
+
+# Forget node from all nodes
+redis> CLUSTER FORGET <node-id>
+OK
+
+# Shutdown removed node
+redis> SHUTDOWN
+```
+
+### Split-Brain Prevention
+
+Configure min replicas:
+
+```bash
+# Require at least 1 replica to accept writes
+redis> CONFIG SET min-replicas-to-write 1
+OK
+
+# Set max lag (seconds)
+redis> CONFIG SET min-replicas-max-lag 10
+OK
+```
+
+## Cluster Architecture
+
+### Hash Slot Distribution
+
+Redis Cluster uses 16384 hash slots:
+
+```bash
+# Calculate slot for key
+slot = CRC16(key) % 16384
+
+# Example
+redis> CLUSTER KEYSLOT "user:1000"
+(integer) 15495
+
+# Hash tags for same-slot keys
+redis> CLUSTER KEYSLOT "user:{1000}:profile"
+(integer) 15495
+redis> CLUSTER KEYSLOT "user:{1000}:settings"
+(integer) 15495
+```
+
+### Node Roles
+
+```bash
+# Check node role
+redis> CLUSTER NODES
+# myself,master = master node
+# myself,slave = replica node
+
+# Get own node ID
+redis> CLUSTER MYID
+"07c37dfeb235213a872192d90877d0cd55635b91"
+```
+
+## Advanced Operations
+
+### Manual Failover
+
+Control failover timing:
+
+```bash
+# Graceful failover (wait for replica sync)
+redis> CLUSTER FAILOVER
+OK
+
+# Force immediate failover
+redis> CLUSTER FAILOVER FORCE
+OK
+
+# Takeover (bypass master)
+redis> CLUSTER FAILOVER TAKEOVER
+OK
+```
+
+### Slot Migration Status
+
+Track migration progress:
+
+```bash
+# Check migrating slots
+redis> CLUSTER NODES | grep migrating
+
+# Check importing slots  
+redis> CLUSTER NODES | grep importing
+
+# Cancel migration
+redis> CLUSTER SETSLOT <slot> STABLE
+OK
+```
+
+### Cluster Reset
+
+Reset node configuration:
+
+```bash
+# Soft reset (keep config)
+redis> CLUSTER RESET SOFT
+OK
+
+# Hard reset (clear all)
+redis> CLUSTER RESET HARD
+OK
+```
+
+<Warning>
+CLUSTER RESET is destructive and should only be used when rebuilding a cluster or removing a node permanently.
+</Warning>
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Cluster state fail**:
+   ```bash
+   redis> CLUSTER INFO
+   cluster_state:fail
+   # Check: Are all slots assigned?
+   # Check: Are nodes reachable?
+   ```
+
+2. **Unassigned slots**:
+   ```bash
+   redis> CLUSTER INFO
+   cluster_slots_assigned:16000
+   # Missing 384 slots
+   # Assign missing slots
+   ```
+
+3. **Node communication issues**:
+   ```bash
+   redis> CLUSTER NODES | grep disconnected
+   # Check network connectivity
+   # Check firewall rules (cluster port = port + 10000)
+   ```
+
+### Diagnostic Commands
+
+```bash
+# Check cluster bus connections
+redis> CLUSTER LINKS
+
+# Get shard information
+redis> CLUSTER SHARDS
+
+# Check specific slot
+redis> CLUSTER SLOTS | grep 1000
+```

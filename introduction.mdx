@@ -1,0 +1,109 @@
+---
+title: Redis Open Source
+description: The fastest in-memory data store for caching, real-time analytics, vector search, and more
+---
+
+Redis is the preferred, fastest, and most feature-rich cache, data structure server, and document and vector query engine for developers building real-time data-driven applications.
+
+<CardGroup cols={2}>
+  <Card title="Caching" icon="bolt">
+    Achieve sub-millisecond latency with multiple eviction policies, key expiration, and hash-field expiration for lightning-fast data access.
+  </Card>
+  
+  <Card title="Session Store" icon="users">
+    Build distributed session stores with flexible data modeling using strings, JSON, or hashes for seamless user experience.
+  </Card>
+  
+  <Card title="Vector Store for GenAI" icon="brain">
+    Power AI applications with short-term memory, long-term memory, semantic caching, and retrieval augmented generation (RAG).
+  </Card>
+  
+  <Card title="Real-Time Analytics" icon="chart-line">
+    Enable personalization, recommendations, fraud detection, and risk assessment with in-memory processing.
+  </Card>
+</CardGroup>
+
+## Why choose Redis?
+
+Redis is a popular choice for developers worldwide due to its combination of speed, flexibility, and rich feature set.
+
+### Performance
+
+Redis keeps data primarily in memory and uses efficient data structures to achieve extremely low latency—often sub-millisecond—for both read and write operations. This makes it ideal for applications demanding real-time responsiveness.
+
+### Flexibility
+
+Redis isn't just a key-value store. It provides native support for a wide range of data structures:
+
+- **String**: Sequences of bytes for caching, counters, and bitwise operations
+- **JSON**: Nested documents indexed and searchable using JSONPath expressions
+- **Hash**: Field-value maps with support for hash field expiration (TTL)
+- **List**: Linked lists for stacks, queues, and queue management
+- **Set**: Unordered collections for tracking unique items and relations
+- **Sorted Set**: Ordered collections for leaderboards and rate limiters
+- **Vector Set (beta)**: Vector embeddings for semantic similarity search and RAG
+- **Stream**: Append-only logs with consumer groups for event sourcing
+
+### Extensibility
+
+Redis has a [modules API](https://redis.io/docs/latest/develop/reference/modules/) that makes it possible to extend Redis functionality and rapidly implement new Redis commands.
+
+<Note>
+Features like JSON, Bloom filters, time series, and Redis Query Engine require building with the `BUILD_WITH_MODULES=yes` flag when compiling from source.
+</Note>
+
+## Key use cases
+
+Redis excels in various applications:
+
+<CardGroup cols={2}>
+  <Card title="Data Structure Server">
+    Provides low-level data structures (strings, lists, sets, hashes, sorted sets, JSON) with high-level semantics (counters, queues, leaderboards, rate limiters) and supports transactions & scripting.
+  </Card>
+  
+  <Card title="Search and Query Engine">
+    Indexing for hash/JSON documents, supporting vector search, full-text search, geospatial queries, ranking, and aggregations via Redis Query Engine.
+  </Card>
+  
+  <Card title="Event Store & Message Broker">
+    Implements queues (lists), priority queues (sorted sets), event deduplication (sets), streams, and pub/sub with probabilistic stream processing.
+  </Card>
+  
+  <Card title="NoSQL Data Store">
+    Key-value, document, and time series data storage with powerful query capabilities.
+  </Card>
+</CardGroup>
+
+## What is Redis Open Source?
+
+Redis Community Edition (Redis CE) was renamed Redis Open Source with the v8.0 release.
+
+Redis Ltd. also offers:
+- [Redis Software](https://redis.io/enterprise/) - Self-managed software with additional compliance, reliability, and resiliency for enterprise scaling
+- [Redis Cloud](https://redis.io/cloud/) - Fully managed service integrated with Google Cloud, Azure, and AWS
+
+<Tip>
+New to Redis? Continue to the [quickstart guide](/quickstart) to get up and running in minutes.
+</Tip>
+
+## Battle-tested and ubiquitous
+
+Redis is battle-tested in production workloads at a massive scale. There is a good chance you indirectly interact with Redis several times daily.
+
+With a simple, text-based protocol and [well-documented command set](https://redis.io/docs/latest/commands/), Redis provides a powerful, fast, and flexible toolkit for solving a wide variety of data management challenges.
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with Redis in 5 minutes
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Install Redis on your platform
+  </Card>
+  
+  <Card title="Data Types" icon="database" href="https://redis.io/docs/latest/develop/data-types/">
+    Explore Redis data types
+  </Card>
+</CardGroup>

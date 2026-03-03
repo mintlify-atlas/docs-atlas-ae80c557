@@ -1,0 +1,327 @@
+---
+title: Hashes
+description: Field-value maps ideal for representing objects, user profiles, and counters
+---
+
+Redis hashes are maps between string fields and string values. They're perfect for representing objects and provide efficient field-level operations without fetching the entire object.
+
+## Use Cases
+
+- **User profiles**: Store user attributes (name, email, age)
+- **Product catalogs**: Product properties (name, price, stock)
+- **Session storage**: Multiple session attributes
+- **Object caching**: Serialize objects as hashes
+- **Counters**: Multiple related counters
+- **Form data**: Temporary storage of form submissions
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Set fields
+redis> HSET user:123 name "Alice" email "alice@example.com" age "30"
+(integer) 3
+
+# Get single field
+redis> HGET user:123 name
+"Alice"
+
+# Get all fields and values
+redis> HGETALL user:123
+1) "name"
+2) "Alice"
+3) "email"
+4) "alice@example.com"
+5) "age"
+6) "30"
+
+# Get multiple fields
+redis> HMGET user:123 name email
+1) "Alice"
+2) "alice@example.com"
+
+# Check if field exists
+redis> HEXISTS user:123 name
+(integer) 1
+```
+
+### Field Operations
+
+```bash
+# Set only if field doesn't exist
+redis> HSETNX user:123 status "active"
+(integer) 1
+redis> HSETNX user:123 status "inactive"
+(integer) 0
+
+# Delete fields
+redis> HDEL user:123 age
+(integer) 1
+
+# Get all field names
+redis> HKEYS user:123
+1) "name"
+2) "email"
+3) "status"
+
+# Get all values
+redis> HVALS user:123
+1) "Alice"
+2) "alice@example.com"
+3) "active"
+
+# Get field count
+redis> HLEN user:123
+(integer) 3
+```
+
+### Numeric Operations
+
+```bash
+# Increment by integer
+redis> HINCRBY stats:page:123 views 1
+(integer) 1
+redis> HINCRBY stats:page:123 views 5
+(integer) 6
+
+# Increment by float
+redis> HINCRBYFLOAT product:456 price 0.50
+"19.99"
+```
+
+### Hash Field Expiration (HFE)
+
+Redis supports TTL on individual hash fields:
+
+```bash
+# Set field with expiration (seconds)
+redis> HSET session:xyz token "abc123"
+(integer) 1
+redis> HEXPIRE session:xyz 3600 FIELDS 1 token
+1) (integer) 1
+
+# Check field TTL
+redis> HTTL session:xyz FIELDS 1 token
+1) (integer) 3599
+
+# Persist field (remove expiration)
+redis> HPERSIST session:xyz FIELDS 1 token
+1) (integer) 1
+```
+
+<Note>
+Hash Field Expiration is available in Redis 7.4+ and allows setting TTL on individual fields within a hash.
+</Note>
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| HSET | O(1) per field | Set field value |
+| HGET | O(1) | Get field value |
+| HMGET | O(N) | N=fields requested |
+| HDEL | O(N) | N=fields deleted |
+| HGETALL | O(N) | N=hash size |
+| HKEYS/HVALS | O(N) | N=hash size |
+| HEXISTS | O(1) | Check field existence |
+| HLEN | O(1) | Get field count |
+| HINCRBY | O(1) | Increment field |
+
+## Patterns and Examples
+
+### User Profile
+
+```bash
+# Store user data
+redis> HSET user:1001 username "alice" email "alice@example.com" \
+                      created "2024-03-03" reputation "1523"
+(integer) 4
+
+# Update single field
+redis> HSET user:1001 reputation "1550"
+(integer) 0
+
+# Increment reputation
+redis> HINCRBY user:1001 reputation 10
+(integer) 1560
+
+# Get user data
+redis> HGETALL user:1001
+1) "username"
+2) "alice"
+3) "email"
+4) "alice@example.com"
+5) "created"
+6) "2024-03-03"
+7) "reputation"
+8) "1560"
+```
+
+### Product Catalog
+
+```bash
+# Store product
+redis> HSET product:2001 name "Redis Book" price "29.99" \
+                         stock "150" category "books"
+(integer) 4
+
+# Update stock after purchase
+redis> HINCRBY product:2001 stock -1
+(integer) 149
+
+# Check stock before purchase
+redis> HGET product:2001 stock
+"149"
+
+# Update price
+redis> HSET product:2001 price "24.99"
+(integer) 0
+```
+
+### Session Storage
+
+```bash
+# Create session
+redis> HSET session:abc123 user_id "1001" ip "192.168.1.1" \
+                           created "1709467200" last_activity "1709467200"
+(integer) 4
+
+# Update last activity
+redis> HSET session:abc123 last_activity "1709467260"
+(integer) 0
+
+# Set session expiration
+redis> EXPIRE session:abc123 3600
+(integer) 1
+
+# Get session data
+redis> HMGET session:abc123 user_id ip
+1) "1001"
+2) "192.168.1.1"
+```
+
+### Statistics Tracking
+
+```bash
+# Track page statistics
+redis> HINCRBY stats:page:home views 1
+(integer) 1523
+redis> HINCRBY stats:page:home unique_visitors 1
+(integer) 891
+
+# Get all stats
+redis> HGETALL stats:page:home
+1) "views"
+2) "1523"
+3) "unique_visitors"
+4) "891"
+
+# Calculate conversion rate
+redis> HMGET stats:page:home views conversions
+1) "1523"
+2) "45"
+```
+
+### Shopping Cart
+
+```bash
+# Add items to cart (item_id: quantity)
+redis> HSET cart:user:123 item:456 "2" item:789 "1"
+(integer) 2
+
+# Update quantity
+redis> HINCRBY cart:user:123 item:456 1
+(integer) 3
+
+# Remove item
+redis> HDEL cart:user:123 item:789
+(integer) 1
+
+# Get cart contents
+redis> HGETALL cart:user:123
+1) "item:456"
+2) "3"
+
+# Set cart expiration (e.g., 7 days)
+redis> EXPIRE cart:user:123 604800
+(integer) 1
+```
+
+## Internal Encoding
+
+Hashes use two encodings:
+
+- **listpack**: Small hashes (memory efficient)
+- **hashtable**: Larger hashes (faster field access)
+
+```bash
+redis> HSET small a "1" b "2" c "3"
+(integer) 3
+redis> OBJECT ENCODING small
+"listpack"
+
+redis> HSET large field1 "value1"
+# ... add many fields
+redis> OBJECT ENCODING large
+"hashtable"
+```
+
+Configuration:
+
+```conf
+# Max listpack entries/value before converting to hashtable
+hash-max-listpack-entries 512
+hash-max-listpack-value 64
+```
+
+## Best Practices
+
+1. **Use hashes for objects** - more memory efficient than separate keys
+2. **Store related counters** in a single hash
+3. **Set expiration** on the hash key for automatic cleanup
+4. **Use HMGET** instead of multiple HGET calls
+5. **Avoid HGETALL on large hashes** - use HSCAN for iteration
+
+<Warning>
+HGETALL returns all fields and values. For large hashes (over 100 fields), use HSCAN to iterate incrementally.
+</Warning>
+
+<Tip>
+Hashes are more memory efficient than using separate keys. For example, `user:123:name`, `user:123:email` use more memory than `HSET user:123 name email`.
+</Tip>
+
+## Hashes vs Other Types
+
+| Need | Use | Why |
+|------|-----|-----|
+| Single value | String | Simplest |
+| Multiple related values | Hash | Efficient, field-level ops |
+| Complex nested objects | JSON | Native JSON querying |
+| List of values | List | Ordered collection |
+| Unique values | Set | Uniqueness guarantee |
+
+### Memory Comparison
+
+```bash
+# Separate keys: ~100 bytes overhead per key
+redis> SET user:123:name "Alice"
+redis> SET user:123:email "alice@example.com"
+redis> SET user:123:age "30"
+# Total: ~300 bytes overhead
+
+# Single hash: ~100 bytes overhead total
+redis> HSET user:123 name "Alice" email "alice@example.com" age "30"
+# Total: ~100 bytes overhead (3x more efficient)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Hash Commands" href="/commands/hashes">
+    Complete command reference
+  </Card>
+  <Card title="JSON" href="/data-types/json">
+    For complex nested objects
+  </Card>
+</CardGroup>

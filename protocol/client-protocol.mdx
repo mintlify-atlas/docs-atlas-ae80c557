@@ -1,0 +1,492 @@
+---
+title: Client-Server Protocol Implementation
+description: Deep dive into how Redis implements the client-server protocol
+---
+
+This document explains how Redis implements the client-server protocol at the code level, covering connection handling, command parsing, response formatting, and I/O management.
+
+## Connection Lifecycle
+
+### Client Creation
+
+When a new connection is accepted, Redis creates a client structure (networking.c:121-256):
+
+```c
+client *createClient(connection *conn) {
+    client *c = zmalloc(sizeof(client));
+    
+    // Initialize connection
+    if (conn) {
+        connEnableTcpNoDelay(conn);  // Disable Nagle's algorithm
+        connSetReadHandler(conn, readQueryFromClient);
+    }
+    
+    // Initialize buffers
+    c->buf = zmalloc_usable(PROTO_REPLY_CHUNK_BYTES, &c->buf_usable_size);
+    c->querybuf = NULL;  // Allocated on first read
+    c->reply = listCreate();  // Response list
+    
+    // Set protocol version (default RESP2)
+    c->resp = 2;
+    
+    // More initialization...
+    return c;
+}
+```
+
+Key initialization steps:
+
+1. **TCP configuration:** Disables Nagle's algorithm for lower latency (networking.c:129)
+2. **Read handler:** Sets up `readQueryFromClient` callback (networking.c:132)
+3. **Output buffer:** Allocates 16KB static buffer (networking.c:135)
+4. **Reply list:** Creates linked list for large responses (networking.c:213)
+5. **Protocol version:** Defaults to RESP2 (networking.c:147)
+
+### Authentication
+
+New clients are automatically checked for authentication requirements (networking.c:102-108):
+
+```c
+static void clientSetDefaultAuth(client *c) {
+    c->user = DefaultUser;
+    c->authenticated = (c->user->flags & USER_FLAG_NOPASS) &&
+                       !(c->user->flags & USER_FLAG_DISABLED);
+}
+```
+
+Clients are authenticated if the default user has no password and is enabled.
+
+## Command Parsing
+
+### Protocol Detection
+
+Redis supports two input protocols:
+
+1. **RESP (multi-bulk):** Commands start with `*`
+2. **Inline:** Simple space-separated commands
+
+The protocol type is detected by the first byte (networking.c:2942-3048):
+
+```c
+if (c->querybuf[c->qb_pos] == '*') {
+    // RESP protocol
+    processMultibulkBuffer(c, pcmd);
+} else {
+    // Inline protocol  
+    processInlineBuffer(c, pcmd);
+}
+```
+
+### RESP Multi-Bulk Parsing
+
+The `processMultibulkBuffer()` function parses RESP commands in stages (networking.c:3098-3200):
+
+**Stage 1: Parse array length**
+
+```c
+if (c->multibulklen == 0) {
+    // Find \r\n
+    newline = strchr(c->querybuf+c->qb_pos, '\r');
+    
+    // Parse *<count>\r\n
+    string2ll(c->querybuf+1+c->qb_pos, newline-..., &ll);
+    c->multibulklen = ll;
+}
+```
+
+**Stage 2: Parse each bulk string**
+
+```c
+while(c->multibulklen) {
+    // Parse $<length>\r\n
+    if (c->bulklen == -1) {
+        newline = memchr(c->querybuf+c->qb_pos, '\r', ...);
+        string2ll(c->querybuf+1+c->qb_pos, ..., &ll);
+        c->bulklen = ll;
+    }
+    
+    // Read <length> bytes + \r\n
+    if (querybuf has enough data) {
+        pcmd->argv[pcmd->argc++] = createStringObject(...);
+        c->bulklen = -1;
+        c->multibulklen--;
+    }
+}
+```
+
+This state machine handles partial reads gracefully—if the complete command hasn't arrived, it returns `C_ERR` and waits for more data.
+
+### Inline Protocol Parsing
+
+Inline commands are simpler (networking.c:2949-3048):
+
+```c
+int processInlineBuffer(client *c, pendingCommand *pcmd) {
+    // Find newline
+    newline = strchr(c->querybuf+c->qb_pos, '\n');
+    
+    // Split by spaces
+    argv = sdssplitargs(aux, &argc);
+    
+    // Create objects
+    for (j = 0; j < argc; j++) {
+        pcmd->argv[pcmd->argc++] = createObject(OBJ_STRING, argv[j]);
+    }
+}
+```
+
+## Response Formatting
+
+### Response Buffer Management
+
+Redis uses a two-tier output system:
+
+**1. Static buffer** - Fast path for small responses (networking.c:447-466):
+
+```c
+size_t _addReplyPayloadToBuffer(client *c, const void *payload, size_t len) {
+    if (listLength(c->reply) > 0) return 0;  // List already in use
+    
+    size_t available = c->buf_usable_size - c->bufpos;
+    size_t reply_len = min(available, len);
+    
+    memcpy(c->buf + c->bufpos, payload, reply_len);
+    c->bufpos += reply_len;
+    
+    return reply_len;
+}
+```
+
+**2. Reply list** - For large responses (networking.c:378-433):
+
+```c
+void _addReplyPayloadToList(client *c, list *reply_list, 
+                            const char *payload, size_t len) {
+    // Try to append to last node
+    listNode *ln = listLast(reply_list);
+    clientReplyBlock *tail = ln ? listNodeValue(ln) : NULL;
+    
+    if (tail && tail->size - tail->used >= len) {
+        // Append to existing node
+        memcpy(tail->buf + tail->used, payload, len);
+        tail->used += len;
+    } else {
+        // Create new node
+        tail = zmalloc(sizeof(clientReplyBlock) + len);
+        memcpy(tail->buf, payload, len);
+        listAddNodeTail(reply_list, tail);
+    }
+}
+```
+
+### Response Type Formatters
+
+Redis provides type-specific formatters:
+
+**Simple strings** (networking.c:825-833):
+
+```c
+void addReplyStatus(client *c, const char *status) {
+    addReplyProto(c, "+", 1);
+    addReplyProto(c, status, strlen(status));
+    addReplyProto(c, "\r\n", 2);
+}
+```
+
+**Errors** (networking.c:614-629):
+
+```c
+void addReplyErrorLength(client *c, const char *s, size_t len) {
+    if (!len || s[0] != '-') addReplyProto(c, "-ERR ", 5);
+    addReplyProto(c, s, len);
+    addReplyProto(c, "\r\n", 2);
+}
+```
+
+**Integers** (networking.c:1143-1152):
+
+```c
+void addReplyLongLong(client *c, long long ll) {
+    if (ll == 0)
+        addReply(c, shared.czero);  // Use shared object
+    else if (ll == 1)
+        addReply(c, shared.cone);
+    else {
+        char buf[128];
+        buf[0] = ':';
+        len = ll2string(buf+1, sizeof(buf)-1, ll);
+        buf[len+1] = '\r';
+        buf[len+2] = '\n';
+        addReplyProto(c, buf, len+3);
+    }
+}
+```
+
+**Bulk strings** (networking.c:1268-1286):
+
+```c
+void addReplyBulk(client *c, robj *obj) {
+    size_t len = sdslen(obj->ptr);
+    
+    // Send $<len>\r\n
+    char buf[128];
+    buf[0] = '$';
+    len_str = ll2string(buf+1, sizeof(buf)-1, len);
+    buf[len_str+1] = '\r';
+    buf[len_str+2] = '\n';
+    addReplyProto(c, buf, len_str+3);
+    
+    // Send <data>\r\n
+    addReplyProto(c, obj->ptr, len);
+    addReplyProto(c, "\r\n", 2);
+}
+```
+
+**Arrays** (networking.c:1166-1170):
+
+```c
+void addReplyArrayLen(client *c, long length) {
+    char buf[128];
+    buf[0] = '*';
+    len = ll2string(buf+1, sizeof(buf)-1, length);
+    buf[len+1] = '\r';
+    buf[len+2] = '\n';
+    addReplyProto(c, buf, len+3);
+}
+```
+
+### RESP3 Support
+
+RESP3 responses are conditionally formatted based on `c->resp` (networking.c:1172-1208):
+
+```c
+void addReplyBool(client *c, int b) {
+    if (c->resp == 2) {
+        // RESP2: Use :0 or :1
+        addReply(c, b ? shared.cone : shared.czero);
+    } else {
+        // RESP3: Use #t or #f
+        addReplyProto(c, b ? "#t\r\n" : "#f\r\n", 4);
+    }
+}
+
+void addReplyNull(client *c) {
+    if (c->resp == 2) {
+        // RESP2: $-1\r\n
+        addReplyProto(c, "$-1\r\n", 5);
+    } else {
+        // RESP3: _\r\n
+        addReplyProto(c, "_\r\n", 3);
+    }
+}
+```
+
+## I/O Event Handling
+
+### Read Events
+
+When data arrives, the read handler is invoked (networking.c:132):
+
+```c
+void readQueryFromClient(connection *conn) {
+    client *c = connGetPrivateData(conn);
+    
+    // Read into query buffer
+    nread = connRead(c->conn, c->querybuf + qblen, readlen);
+    
+    // Parse and execute commands
+    processInputBuffer(c);
+}
+```
+
+The `processInputBuffer` function loops through the query buffer, parsing and executing each complete command found.
+
+### Write Events
+
+Write events are managed through a pending write queue (networking.c:282-299):
+
+```c
+void putClientInPendingWriteQueue(client *c) {
+    c->flags |= CLIENT_PENDING_WRITE;
+    listLinkNodeHead(server.clients_pending_write, &c->clients_pending_write_node);
+}
+```
+
+Before returning to the event loop, Redis attempts to flush pending writes synchronously:
+
+```c
+int handleClientsWithPendingWrites(void) {
+    listIter li;
+    listRewind(server.clients_pending_write, &li);
+    
+    while((ln = listNext(&li))) {
+        client *c = listNodeValue(ln);
+        
+        // Try to write synchronously
+        if (writeToClient(c, 0) == C_ERR) continue;
+        
+        // If more data remains, install write handler
+        if (clientHasPendingReplies(c)) {
+            installClientWriteHandler(c);
+        }
+    }
+}
+```
+
+This design minimizes event loop overhead by avoiding write handlers when buffers can be flushed immediately.
+
+## Performance Optimizations
+
+### Shared Objects
+
+Common responses are pre-allocated (networking.c:1084-1101):
+
+```c
+shared.ok = createObject(OBJ_STRING, sdsnew("+OK\r\n"));
+shared.err = createObject(OBJ_STRING, sdsnew("-ERR\r\n"));
+shared.czero = createObject(OBJ_STRING, sdsnew(":0\r\n"));
+shared.cone = createObject(OBJ_STRING, sdsnew(":1\r\n"));
+
+// Bulk headers $0\r\n through $64\r\n
+for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++) {
+    shared.bulkhdr[j] = createObject(OBJ_STRING, ...);
+}
+
+// Array headers *0\r\n through *64\r\n
+for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++) {
+    shared.mbulkhdr[j] = createObject(OBJ_STRING, ...);
+}
+```
+
+These shared objects eliminate allocation overhead for common responses.
+
+### Zero-Copy Bulk Strings
+
+For large bulk strings, Redis can avoid copying data by using reference counting (networking.c:1230-1264):
+
+```c
+int tryAvoidBulkStrCopyToReply(client *c, robj *obj, size_t len) {
+    if (!isCopyAvoidPreferred(c, obj, len)) return C_ERR;
+    
+    // Instead of copying, store reference to object
+    _addBulkStrRefToBufferOrList(c, obj, len);
+    incrRefCount(obj);  // Prevent premature freeing
+    
+    return C_OK;
+}
+```
+
+This optimization is particularly effective when:
+- I/O threads are enabled
+- String size exceeds threshold (32KB for single-threaded, any size for multi-threaded)
+- Object has a normal reference count
+
+### Output Buffer Limits
+
+To prevent slow clients from consuming excessive memory, Redis enforces output buffer limits:
+
+```c
+void closeClientOnOutputBufferLimitReached(client *c, int async) {
+    if (c->reply_bytes > server.client_obuf_limits[c->type].hard_limit_bytes) {
+        // Hard limit exceeded - close immediately
+        freeClient(c);
+    } else if (c->reply_bytes > server.client_obuf_limits[c->type].soft_limit_bytes) {
+        // Soft limit exceeded - check duration
+        if (c->obuf_soft_limit_reached_time &&
+            server.unixtime - c->obuf_soft_limit_reached_time >
+            server.client_obuf_limits[c->type].soft_limit_seconds) {
+            freeClient(c);
+        }
+    }
+}
+```
+
+<Note>
+Output buffer limits protect the server from memory exhaustion due to slow or unresponsive clients. Configure these limits based on your workload using `client-output-buffer-limit`.
+</Note>
+
+## Error Handling
+
+### Protocol Errors
+
+Protocol errors are logged and cause disconnection (networking.c:3054-3085):
+
+```c
+static void setProtocolError(const char *errstr, client *c) {
+    // Log the error with context
+    serverLog(LL_VERBOSE, "Protocol error (%s) from client: %s. %s",
+              errstr, client_info, query_buffer_sample);
+    
+    // Mark client for closure
+    c->flags |= (CLIENT_CLOSE_AFTER_REPLY | CLIENT_PROTOCOL_ERROR);
+}
+```
+
+Common protocol errors:
+- `CLIENT_READ_INVALID_MULTIBUCK_LENGTH` - Invalid array count
+- `CLIENT_READ_TOO_BIG_MBULK_COUNT_STRING` - Array count string too large
+- `CLIENT_READ_TOO_BIG_INLINE_REQUEST` - Inline command too large
+- `CLIENT_READ_UNBALANCED_QUOTES` - Malformed inline command
+
+### Connection Errors
+
+Connection errors (read/write failures) result in client cleanup:
+
+```c
+if (nread == -1) {
+    if (connGetState(c->conn) == CONN_STATE_CONNECTED) {
+        serverLog(LL_VERBOSE, "Reading from client: %s", connGetLastError(c->conn));
+    }
+    freeClientAsync(c);
+    return;
+}
+```
+
+## Multi-Threading Support
+
+Redis 6+ supports I/O threading for network operations. Clients can be assigned to I/O threads (networking.c:140-142, 1597):
+
+```c
+c->tid = IOTHREAD_MAIN_THREAD_ID;        // Thread ID
+c->running_tid = IOTHREAD_MAIN_THREAD_ID; // Currently executing thread
+
+// Later, assign to I/O thread
+if (server.io_threads_num > 1) {
+    assignClientToIOThread(c);
+}
+```
+
+I/O threads handle reading/writing while the main thread executes commands, improving throughput on multi-core systems.
+
+<Tip>
+Enable I/O threads with `io-threads` configuration option. Set it to the number of cores minus 1 (leaving one for the main thread). I/O threading is most beneficial with many concurrent connections.
+</Tip>
+
+## Design Decisions
+
+### Why RESP?
+
+1. **Human-readable:** Easy to debug with `telnet` or `nc`
+2. **Simple parsing:** No complex state machines needed
+3. **Binary-safe:** Bulk strings can contain any data
+4. **Efficient:** Minimal overhead for small responses
+5. **Extensible:** New types can be added (RESP3)
+
+### Why Two Output Buffers?
+
+The dual buffer design (static + list) optimizes for the common case:
+
+- **Static buffer (16KB):** Handles ~95% of responses without allocation
+- **Reply list:** Handles large responses without copying
+
+This provides good performance across a wide range of response sizes.
+
+### Why Pending Write Queue?
+
+The pending write queue allows Redis to:
+
+1. **Batch syscalls:** Multiple responses can be written in one `write()` call
+2. **Avoid event loop overhead:** Many writes complete synchronously
+3. **Reduce latency:** Immediate write attempts reduce response time
+
+Only clients with remaining data after synchronous write get a write handler installed.

@@ -1,0 +1,624 @@
+---
+title: "Scripting Commands"
+description: "Commands for executing Lua scripts in Redis"
+---
+
+Redis scripting allows you to execute Lua scripts server-side, enabling atomic operations, complex logic, and reduced network overhead.
+
+## EVAL
+
+Executes a Lua script on the Redis server.
+
+### Syntax
+
+```bash
+EVAL script numkeys key [key ...] arg [arg ...]
+```
+
+<ParamField path="script" type="string" required>
+  The Lua script to execute.
+</ParamField>
+
+<ParamField path="numkeys" type="integer" required>
+  Number of key arguments that follow. Keys should be passed before other arguments.
+</ParamField>
+
+<ParamField path="key" type="key">
+  Key names accessible as `KEYS[1]`, `KEYS[2]`, etc. in the script.
+</ParamField>
+
+<ParamField path="arg" type="string">
+  Additional arguments accessible as `ARGV[1]`, `ARGV[2]`, etc. in the script.
+</ParamField>
+
+<ResponseField name="result" type="any">
+  Return value depends on the script that is executed. Can be string, integer, array, or nil.
+</ResponseField>
+
+**Time Complexity:** Depends on the script that is executed.
+
+### Examples
+
+```bash
+redis> EVAL "return {KEYS[1],KEYS[2],ARGV[1],ARGV[2]}" 2 key1 key2 first second
+1) "key1"
+2) "key2"
+3) "first"
+4) "second"
+
+redis> EVAL "return redis.call('SET', KEYS[1], ARGV[1])" 1 mykey "Hello"
+OK
+
+redis> EVAL "return redis.call('GET', KEYS[1])" 1 mykey
+"Hello"
+
+redis> EVAL "return redis.call('INCR', KEYS[1])" 1 counter
+(integer) 1
+```
+
+## EVALSHA
+
+Executes a cached Lua script by its SHA1 digest.
+
+### Syntax
+
+```bash
+EVALSHA sha1 numkeys key [key ...] arg [arg ...]
+```
+
+<ParamField path="sha1" type="string" required>
+  The SHA1 digest of the script to execute.
+</ParamField>
+
+<ParamField path="numkeys" type="integer" required>
+  Number of key arguments that follow.
+</ParamField>
+
+<ParamField path="key" type="key">
+  Key names for the script.
+</ParamField>
+
+<ParamField path="arg" type="string">
+  Additional arguments for the script.
+</ParamField>
+
+<ResponseField name="result" type="any">
+  Return value depends on the script.
+</ResponseField>
+
+**Time Complexity:** Depends on the script that is executed.
+
+### Examples
+
+```bash
+redis> SCRIPT LOAD "return redis.call('GET', KEYS[1])"
+"6b1bf486c81ceb7edf3c093f4c48582e38c0e791"
+
+redis> EVALSHA 6b1bf486c81ceb7edf3c093f4c48582e38c0e791 1 mykey
+"Hello"
+
+redis> EVALSHA ffffffffffffffffffffffffffffffffffffffff 0
+(error) NOSCRIPT No matching script. Please use EVAL.
+```
+
+## SCRIPT LOAD
+
+Loads a script into the script cache.
+
+### Syntax
+
+```bash
+SCRIPT LOAD script
+```
+
+<ParamField path="script" type="string" required>
+  The Lua script to load into cache.
+</ParamField>
+
+<ResponseField name="sha1" type="string">
+  The SHA1 digest of the script.
+</ResponseField>
+
+**Time Complexity:** O(N) where N is the length of the script.
+
+### Examples
+
+```bash
+redis> SCRIPT LOAD "return redis.call('GET', KEYS[1])"
+"6b1bf486c81ceb7edf3c093f4c48582e38c0e791"
+
+redis> SCRIPT LOAD "return 'Hello'"
+"1b936e3fe509bcbc9cd0664897bbe8fd0cac101b"
+```
+
+## Related Commands
+
+### Additional Script Commands
+
+- **SCRIPT EXISTS**: Check if scripts exist in cache
+- **SCRIPT FLUSH**: Remove all scripts from cache
+- **SCRIPT KILL**: Kill currently executing script
+- **SCRIPT DEBUG**: Set script debugging mode
+- **EVAL_RO**: Read-only EVAL (7.0+)
+- **EVALSHA_RO**: Read-only EVALSHA (7.0+)
+- **FCALL**: Call Redis function (7.0+)
+- **FCALL_RO**: Read-only function call (7.0+)
+- **FUNCTION LOAD**: Load Redis function (7.0+)
+- **FUNCTION DELETE**: Delete function (7.0+)
+- **FUNCTION LIST**: List functions (7.0+)
+
+## Lua Scripting Basics
+
+### Available Functions
+
+```lua
+-- Call Redis commands
+redis.call('SET', 'key', 'value')
+redis.pcall('GET', 'key')  -- Protected call, returns error as table
+
+-- Logging
+redis.log(redis.LOG_DEBUG, 'Debug message')
+redis.log(redis.LOG_NOTICE, 'Notice message')
+redis.log(redis.LOG_WARNING, 'Warning message')
+
+-- Status reply
+return redis.status_reply('OK')
+
+-- Error reply
+return redis.error_reply('Error message')
+```
+
+### Data Type Conversions
+
+**Lua to Redis:**
+- Lua number → Redis integer
+- Lua string → Redis bulk string
+- Lua table (array) → Redis array
+- Lua table with `ok` field → Redis status reply
+- Lua table with `err` field → Redis error reply
+- Lua boolean false → Redis nil
+- Lua boolean true → Redis integer 1
+
+**Redis to Lua:**
+- Redis integer → Lua number
+- Redis bulk string → Lua string
+- Redis array → Lua table (array)
+- Redis status reply → Lua table with `ok` field
+- Redis error reply → Lua table with `err` field
+- Redis nil → Lua boolean false
+
+## Use Cases
+
+### Atomic Operations
+
+Implement complex atomic operations:
+
+```bash
+redis> EVAL "
+  local current = redis.call('GET', KEYS[1])
+  if current and tonumber(current) > tonumber(ARGV[1]) then
+    return redis.call('SET', KEYS[1], ARGV[1])
+  end
+  return nil
+" 1 mykey 100
+```
+
+### Rate Limiting
+
+Implement token bucket rate limiter:
+
+```bash
+redis> SCRIPT LOAD "
+  local key = KEYS[1]
+  local limit = tonumber(ARGV[1])
+  local period = tonumber(ARGV[2])
+  local current = redis.call('INCR', key)
+  if current == 1 then
+    redis.call('EXPIRE', key, period)
+  end
+  if current > limit then
+    return 0
+  end
+  return 1
+"
+"4f9d9b5d7f0b5c8d6e3a2f1b9c8d7e6f5a4b3c2d"
+
+redis> EVALSHA 4f9d9b5d7f0b5c8d6e3a2f1b9c8d7e6f5a4b3c2d 1 user:1000:requests 100 60
+(integer) 1
+```
+
+### Conditional Updates
+
+Update only if condition met:
+
+```bash
+redis> EVAL "
+  local current = redis.call('HGET', KEYS[1], 'version')
+  if current == ARGV[1] then
+    redis.call('HSET', KEYS[1], 'data', ARGV[2])
+    redis.call('HINCRBY', KEYS[1], 'version', 1)
+    return 1
+  end
+  return 0
+" 1 myobject 5 "new_data"
+(integer) 1
+```
+
+### Distributed Lock
+
+Implement a distributed lock with expiration:
+
+```bash
+redis> SCRIPT LOAD "
+  if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+    return 1
+  else
+    return 0
+  end
+"
+"2fa3b0e4c8d6f5a4b3c2d1e0f9a8b7c6d5e4f3a2"
+
+# Acquire lock
+redis> EVALSHA 2fa3b0e4c8d6f5a4b3c2d1e0f9a8b7c6d5e4f3a2 1 lock:resource1 token123 30
+(integer) 1
+
+# Release lock
+redis> EVAL "
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  else
+    return 0
+  end
+" 1 lock:resource1 token123
+(integer) 1
+```
+
+### Batch Operations
+
+Process multiple keys atomically:
+
+```bash
+redis> EVAL "
+  local sum = 0
+  for i, key in ipairs(KEYS) do
+    local val = redis.call('GET', key)
+    if val then
+      sum = sum + tonumber(val)
+    end
+  end
+  return sum
+" 3 counter1 counter2 counter3
+(integer) 150
+```
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Cache Scripts**: Use SCRIPT LOAD and EVALSHA for repeated execution
+2. **Minimize Commands**: Reduce redis.call() calls in loops
+3. **Avoid Globals**: Use local variables
+4. **Short Scripts**: Keep scripts brief and focused
+
+### Script Design
+
+<Tabs>
+  <Tab title="Good Practice">
+    Cache and reuse:
+    
+    ```bash
+    # Load once
+    redis> SCRIPT LOAD "return redis.call('GET', KEYS[1])"
+    "sha1digest"
+    
+    # Execute many times
+    redis> EVALSHA sha1digest 1 key1
+    redis> EVALSHA sha1digest 1 key2
+    redis> EVALSHA sha1digest 1 key3
+    ```
+  </Tab>
+  
+  <Tab title="Bad Practice">
+    Don't reload:
+    
+    ```bash
+    # Don't do this repeatedly
+    redis> EVAL "return redis.call('GET', KEYS[1])" 1 key1
+    redis> EVAL "return redis.call('GET', KEYS[1])" 1 key2
+    redis> EVAL "return redis.call('GET', KEYS[1])" 1 key3
+    ```
+  </Tab>
+</Tabs>
+
+### Error Handling
+
+Use pcall for error handling:
+
+```lua
+local result = redis.pcall('GET', KEYS[1])
+if type(result) == 'table' and result.err then
+  -- Handle error
+  return redis.error_reply(result.err)
+end
+return result
+```
+
+### Key Naming
+
+Always pass keys as KEYS, not ARGV:
+
+```lua
+-- Good: Keys in KEYS array
+redis.call('GET', KEYS[1])
+
+-- Bad: Keys in ARGV (breaks cluster routing)
+redis.call('GET', ARGV[1])
+```
+
+## Patterns
+
+### Check and Set
+
+Atomic check-and-set operation:
+
+```bash
+redis> EVAL "
+  local current = redis.call('GET', KEYS[1])
+  if not current or current == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[2])
+    return 1
+  end
+  return 0
+" 1 mykey "expected" "new_value"
+(integer) 1
+```
+
+### Batch GET with Default
+
+Get multiple keys with default values:
+
+```bash
+redis> EVAL "
+  local result = {}
+  for i, key in ipairs(KEYS) do
+    local val = redis.call('GET', key)
+    result[i] = val or ARGV[1]
+  end
+  return result
+" 3 key1 key2 key3 "default"
+1) "value1"
+2) "default"
+3) "value3"
+```
+
+### Sorted Set Union with Limit
+
+Union sorted sets and get top N:
+
+```bash
+redis> EVAL "
+  redis.call('ZUNIONSTORE', KEYS[1], #KEYS - 1, unpack(KEYS, 2))
+  return redis.call('ZREVRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1, 'WITHSCORES')
+" 4 temp:result set1 set2 set3 10
+```
+
+### Sliding Window Counter
+
+Count events in sliding time window:
+
+```bash
+redis> EVAL "
+  local key = KEYS[1]
+  local now = tonumber(ARGV[1])
+  local window = tonumber(ARGV[2])
+  local limit = tonumber(ARGV[3])
+  
+  -- Remove old entries
+  redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+  
+  -- Count current entries
+  local current = redis.call('ZCARD', key)
+  
+  if current < limit then
+    redis.call('ZADD', key, now, now)
+    redis.call('EXPIRE', key, window)
+    return 1
+  end
+  return 0
+" 1 requests:user:1000 1640000000 60 100
+(integer) 1
+```
+
+### Multi-Key Transaction
+
+Atomic multi-key operation:
+
+```bash
+redis> EVAL "
+  local balance = tonumber(redis.call('GET', KEYS[1]))
+  local amount = tonumber(ARGV[1])
+  
+  if balance >= amount then
+    redis.call('DECRBY', KEYS[1], amount)
+    redis.call('INCRBY', KEYS[2], amount)
+    return 1
+  end
+  return 0
+" 2 account:1000:balance account:2000:balance 100
+(integer) 1
+```
+
+## Script Management
+
+### Cache Management
+
+```bash
+# Check if scripts exist
+redis> SCRIPT EXISTS sha1 sha2 sha3
+1) (integer) 1
+2) (integer) 0
+3) (integer) 1
+
+# Flush all scripts
+redis> SCRIPT FLUSH
+OK
+
+# Flush specific mode
+redis> SCRIPT FLUSH SYNC
+OK
+redis> SCRIPT FLUSH ASYNC
+OK
+```
+
+### Long-Running Scripts
+
+```bash
+# Kill long-running script
+redis> SCRIPT KILL
+OK
+
+# Note: Only works for read-only scripts
+# For write scripts, must use SHUTDOWN NOSAVE
+```
+
+### Debugging
+
+```bash
+# Enable debugging (requires redis-cli)
+redis> SCRIPT DEBUG YES
+OK
+
+# Debug modes: YES, SYNC, NO
+redis> SCRIPT DEBUG SYNC
+OK
+
+redis> SCRIPT DEBUG NO
+OK
+```
+
+## Advanced Features
+
+### Random and Time Functions
+
+```lua
+-- Random (deterministic in script)
+math.random()
+
+-- Time (use ARGV, not lua time functions)
+-- Pass time as ARGV for determinism
+```
+
+### Returning Multiple Values
+
+```lua
+-- Return array
+return {redis.call('GET', KEYS[1]), redis.call('GET', KEYS[2])}
+
+-- Return status
+return {ok = 'Done'}
+
+-- Return error
+return {err = 'Something went wrong'}
+```
+
+### Iterating Results
+
+```lua
+local keys = redis.call('KEYS', 'user:*')
+for i, key in ipairs(keys) do
+  redis.call('EXPIRE', key, 3600)
+end
+return #keys
+```
+
+<Warning>
+Scripts are atomic but can block the server. Avoid long-running operations. Use SCRIPT KILL to terminate read-only scripts, but write scripts require server restart if stuck.
+</Warning>
+
+## Common Pitfalls
+
+### Non-Determinism
+
+Avoid non-deterministic functions:
+
+```lua
+-- Bad: Non-deterministic
+math.random()
+os.time()
+
+-- Good: Pass as argument
+local timestamp = tonumber(ARGV[1])
+```
+
+### Global Variables
+
+Don't pollute global scope:
+
+```lua
+-- Bad: Global variable
+count = 0
+
+-- Good: Local variable
+local count = 0
+```
+
+### Wrong Key Access
+
+Keys must be in KEYS array:
+
+```lua
+-- Bad: Key in ARGV (breaks cluster)
+redis.call('GET', ARGV[1])
+
+-- Good: Key in KEYS
+redis.call('GET', KEYS[1])
+```
+
+## Script vs Other Approaches
+
+| Feature | Lua Script | Transaction | Pipeline |
+|---------|-----------|-------------|----------|
+| Atomic | Yes | Yes | No |
+| Conditional | Yes | Limited | No |
+| Round Trips | 1 | 1 | 1 |
+| Logic | Complex | None | None |
+| Use Case | Complex ops | Multi-cmd | Batch ops |
+
+## Example: Leaky Bucket
+
+Complete leaky bucket implementation:
+
+```bash
+redis> SCRIPT LOAD "
+  local key = KEYS[1]
+  local capacity = tonumber(ARGV[1])
+  local rate = tonumber(ARGV[2])
+  local requested = tonumber(ARGV[3])
+  local now = tonumber(ARGV[4])
+  
+  local bucket = redis.call('HMGET', key, 'tokens', 'last')
+  local tokens = tonumber(bucket[1])
+  local last = tonumber(bucket[2])
+  
+  if not tokens then
+    tokens = capacity
+    last = now
+  else
+    local elapsed = now - last
+    tokens = math.min(capacity, tokens + elapsed * rate)
+  end
+  
+  if tokens >= requested then
+    tokens = tokens - requested
+    redis.call('HMSET', key, 'tokens', tokens, 'last', now)
+    redis.call('EXPIRE', key, capacity / rate)
+    return 1
+  end
+  
+  return 0
+"
+"sha1digest"
+
+redis> EVALSHA sha1digest 1 bucket:user:1000 100 10 5 1640000000
+(integer) 1
+```

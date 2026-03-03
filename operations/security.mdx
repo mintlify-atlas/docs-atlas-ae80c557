@@ -1,0 +1,470 @@
+---
+title: 'Security'
+description: 'Redis security: ACL, authentication, and protected mode'
+---
+
+## Overview
+
+Redis provides multiple security layers including network isolation, authentication, Access Control Lists (ACL), and protected mode. This guide covers security configuration and best practices.
+
+<Warning>
+Redis is designed to be accessed by trusted clients inside trusted environments. Never expose Redis directly to the internet without proper security measures.
+</Warning>
+
+## Protected Mode
+
+Protected mode is a security layer that prevents Redis instances from being accessed when left open on the internet.
+
+### How Protected Mode Works
+
+When protected mode is enabled and the default user has no password:
+- Redis only accepts connections from:
+  - IPv4 loopback (127.0.0.1)
+  - IPv6 loopback (::1)
+  - Unix domain sockets
+
+### Configuration
+
+```conf
+# Enable protected mode (default)
+protected-mode yes
+
+# Disable only if you have proper authentication and firewall
+protected-mode no
+```
+
+<Warning>
+Disable protected mode only if:
+1. You have configured authentication (requirepass or ACL)
+2. Your firewall properly restricts access
+3. You use the `bind` directive to limit network interfaces
+</Warning>
+
+## Network Security
+
+### Bind Directive
+
+Limit which network interfaces Redis listens on:
+
+```conf
+# Secure default - localhost only
+bind 127.0.0.1 -::1
+
+# Specific private network interfaces
+bind 192.168.1.100 10.0.0.1
+
+# All interfaces (use with caution!)
+# bind * -::*
+```
+
+### Unix Domain Sockets
+
+For local connections, Unix sockets provide better security than TCP:
+
+```conf
+unixsocket /run/redis.sock
+unixsocketperm 700
+```
+
+Connect using:
+
+```bash
+redis-cli -s /run/redis.sock
+```
+
+## Authentication
+
+### Legacy Password Authentication (requirepass)
+
+<Note>
+Starting with Redis 6, `requirepass` is a compatibility layer on top of ACL. Consider using ACL for new deployments.
+</Note>
+
+```conf
+# Set a strong password
+requirepass your_strong_password_here
+```
+
+Authenticate with:
+
+```bash
+redis-cli
+AUTH your_strong_password_here
+```
+
+<Warning>
+Redis is very fast and can test up to 1 million passwords per second. Use very strong, long passwords from `/dev/urandom` or similar.
+</Warning>
+
+### Password Best Practices
+
+- Use passwords at least 32 characters long
+- Generate from cryptographically secure random sources
+- Rotate passwords regularly
+- Never commit passwords to version control
+- Use environment variables or secrets management systems
+
+## Access Control Lists (ACL)
+
+ACL provides fine-grained access control, introduced in Redis 6.0.
+
+### ACL Concepts
+
+ACL allows you to:
+- Create multiple users
+- Define command permissions per user
+- Restrict key access patterns
+- Control pub/sub channel access
+- Enable/disable users
+
+### ACL Commands
+
+#### ACL SETUSER
+
+Create or modify a user:
+
+```bash
+# Create a basic user
+ACL SETUSER alice on >password123 ~* +@all
+
+# Read-only user for specific keys
+ACL SETUSER readonly on >readpass ~sensor:* +@read
+
+# User for write operations on specific keys
+ACL SETUSER writer on >writepass ~logs:* +@write
+
+# User with command restrictions
+ACL SETUSER limited on >limitpass ~* +get +set +incr
+```
+
+#### ACL Syntax
+
+ACL rules format:
+
+```
+ACL SETUSER <username> <rules>
+```
+
+**User State:**
+- `on` - Enable user (can authenticate)
+- `off` - Disable user (cannot authenticate)
+- `nopass` - No password required (use with caution!)
+
+**Password Management:**
+- `>password` - Add password to user
+- `#<hash>` - Add hashed password
+- `<password` - Remove password
+- `!<hash>` - Remove hashed password
+- `resetpass` - Remove all passwords
+
+**Key Patterns:**
+- `~*` or `allkeys` - Access all keys
+- `~pattern` - Access keys matching glob pattern
+- `%R~pattern` - Read access to pattern
+- `%W~pattern` - Write access to pattern
+- `resetkeys` - Remove all key patterns
+
+**Command Permissions:**
+- `+@<category>` - Allow command category
+- `-@<category>` - Deny command category  
+- `+<command>` - Allow specific command
+- `-<command>` - Deny specific command
+- `+@all` or `allcommands` - Allow all commands
+- `-@all` or `nocommands` - Deny all commands
+
+**Channel Patterns:**
+- `&*` or `allchannels` - Access all pub/sub channels
+- `&pattern` - Access channels matching pattern
+- `resetchannels` - Remove all channel patterns
+
+**Command Categories:**
+- `@admin` - Administrative commands
+- `@dangerous` - Potentially dangerous commands
+- `@keyspace` - Key operations
+- `@read` - Read operations
+- `@write` - Write operations
+- `@set` - Set commands
+- `@sortedset` - Sorted set commands
+- `@list` - List commands
+- `@hash` - Hash commands
+- `@string` - String commands
+- `@pubsub` - Pub/sub commands
+- `@transaction` - Transaction commands
+- `@scripting` - Script commands
+- `@stream` - Stream commands
+
+#### ACL GETUSER
+
+View user permissions:
+
+```bash
+ACL GETUSER alice
+```
+
+Returns user flags, passwords (hashed), commands, keys, and channels.
+
+#### ACL LIST
+
+List all users in ACL format:
+
+```bash
+ACL LIST
+```
+
+#### ACL USERS
+
+Get list of usernames:
+
+```bash
+ACL USERS
+```
+
+#### ACL WHOAMI
+
+Get the current authenticated username:
+
+```bash
+ACL WHOAMI
+```
+
+#### ACL DELUSER
+
+Delete a user:
+
+```bash
+ACL DELUSER alice
+```
+
+<Warning>
+Deleting a user will terminate all active connections authenticated with that user.
+</Warning>
+
+#### ACL LOG
+
+View security events (failed authentications, rejected commands):
+
+```bash
+# View recent ACL failures
+ACL LOG
+
+# View last 10 entries
+ACL LOG 10
+
+# Reset the log
+ACL LOG RESET
+```
+
+Configure log length:
+
+```conf
+acllog-max-len 128
+```
+
+### ACL Configuration File
+
+Define users in a separate ACL file:
+
+```conf
+# redis.conf
+aclfile /etc/redis/users.acl
+```
+
+**users.acl:**
+
+```acl
+# Default user (required)
+user default on nopass ~* +@all
+
+# Admin user
+user admin on >strong_admin_password ~* +@all
+
+# Application user - limited permissions
+user app on >app_password ~app:* +@read +@write -@dangerous
+
+# Read-only monitoring user
+user monitor on >monitor_password ~* +@read +ping +info
+
+# Worker for background jobs
+user worker on >worker_password ~jobs:* ~results:* +@list +@string +get +set +del
+```
+
+<Note>
+The ACL file cannot be used together with `requirepass`. Choose one authentication method.
+</Note>
+
+### ACL Examples
+
+#### Example 1: Read-Only User
+
+```bash
+ACL SETUSER readonly on >readonlypass ~* +@read -@write -@admin
+```
+
+This user can:
+- Execute all read commands
+- Access all keys
+
+Cannot:
+- Execute write commands  
+- Execute admin commands
+
+#### Example 2: Cache-Only User
+
+```bash
+ACL SETUSER cache on >cachepass ~cache:* +get +set +del +ttl +expire
+```
+
+This user can:
+- GET, SET, DEL keys matching `cache:*`
+- Check TTL and set expiration
+
+Cannot:
+- Access other keys
+- Execute other commands
+
+#### Example 3: Pub/Sub User
+
+```bash
+ACL SETUSER pubsub on >pubsubpass resetchannels &notifications:* +publish +subscribe +psubscribe
+```
+
+This user can:
+- Publish to channels matching `notifications:*`
+- Subscribe to matching channels
+
+Cannot:
+- Access keys
+- Use other channels
+
+#### Example 4: Multi-Pattern Read/Write Separation
+
+```bash
+ACL SETUSER split on >splitpass %R~read:* %W~write:* +@all
+```
+
+This user:
+- Can read keys matching `read:*`
+- Can write keys matching `write:*`
+- Has all command permissions
+
+## Command Renaming
+
+<Warning>
+Command renaming is **deprecated**. Use ACL to remove commands from users instead.
+</Warning>
+
+For backward compatibility:
+
+```conf
+# Rename dangerous command
+rename-command CONFIG b840fc02d524045429941cc15f59e41cb7be6c52
+
+# Disable command completely
+rename-command FLUSHALL ""
+```
+
+## Protected Configuration Directives
+
+Redis has security directives to control dangerous operations:
+
+```conf
+# Block protected configs from non-local connections
+enable-protected-configs no
+
+# Block debug commands
+enable-debug-command no
+
+# Block module loading commands  
+enable-module-command no
+```
+
+Values:
+- `no` - Block for all connections
+- `yes` - Allow for all connections
+- `local` - Allow only for local connections (127.0.0.1, ::1, Unix socket)
+
+## Security Hardening Steps
+
+<Steps>
+
+### Limit Network Exposure
+
+```conf
+# Bind to specific interface
+bind 192.168.1.100
+
+# Enable protected mode
+protected-mode yes
+```
+
+### Configure Authentication
+
+```bash
+# Use ACL for fine-grained control
+ACL SETUSER default on >strong_default_password ~* +@all
+
+# Or use requirepass for simple authentication
+CONFIG SET requirepass strong_password_here
+```
+
+### Restrict Command Access
+
+```bash
+# Create application user with limited permissions
+ACL SETUSER myapp on >app_password ~myapp:* +@read +@write -@dangerous -@admin
+```
+
+### Enable TLS/SSL
+
+See [TLS Configuration](/operations/tls) for encrypting client-server communication.
+
+### Monitor Security Events
+
+```bash
+# Regularly check ACL log
+ACL LOG
+
+# Monitor authentication failures in logs
+CONFIG SET loglevel notice
+```
+
+### Use Firewall Rules
+
+Restrict Redis port access using iptables or cloud security groups:
+
+```bash
+# Example iptables rule
+sudo iptables -A INPUT -p tcp --dport 6379 -s 192.168.1.0/24 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 6379 -j DROP
+```
+
+### Disable Dangerous Commands
+
+```bash
+# Remove dangerous commands from default user
+ACL SETUSER default -flushall -flushdb -config -shutdown
+```
+
+</Steps>
+
+## Security Checklist
+
+- [ ] Configure `bind` directive to limit network interfaces
+- [ ] Enable `protected-mode` unless using ACL or requirepass
+- [ ] Set strong passwords (32+ characters)
+- [ ] Use ACL to create application-specific users
+- [ ] Restrict command access using ACL categories
+- [ ] Enable TLS for client-server communication
+- [ ] Configure firewall rules
+- [ ] Regularly audit ACL LOG
+- [ ] Keep Redis updated with security patches
+- [ ] Use Unix sockets for local connections
+- [ ] Disable or restrict dangerous commands
+- [ ] Monitor authentication attempts in logs
+
+## See Also
+
+- [Configuration](/operations/configuration)
+- [TLS Setup](/operations/tls)
+- [Monitoring](/operations/monitoring)
+- [Redis Security Documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/security/)

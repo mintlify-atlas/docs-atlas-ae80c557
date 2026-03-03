@@ -1,0 +1,372 @@
+---
+title: Sorted sets
+description: Score-ordered unique collections perfect for leaderboards, priority queues, and time-series data
+---
+
+Redis sorted sets are collections of unique strings ordered by an associated score. They combine the uniqueness of sets with the ordering of lists, using a skiplist and hash table for O(log N) operations.
+
+## Use Cases
+
+- **Leaderboards**: Game scores, user rankings
+- **Priority queues**: Task scheduling by priority
+- **Rate limiting**: Sliding window counters
+- **Time series**: Events ordered by timestamp
+- **Auto-complete**: Search suggestions ranked by frequency
+- **Real-time analytics**: Top N items by metric
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Add members with scores
+redis> ZADD leaderboard 100 "player1" 200 "player2" 150 "player3"
+(integer) 3
+
+# Get member score
+redis> ZSCORE leaderboard "player2"
+"200"
+
+# Get member rank (0-based, lowest score first)
+redis> ZRANK leaderboard "player1"
+(integer) 0
+
+# Get member rank (highest score first)
+redis> ZREVRANK leaderboard "player2"
+(integer) 0
+
+# Get set size
+redis> ZCARD leaderboard
+(integer) 3
+```
+
+### ZADD Options
+
+```bash
+# Only add if doesn't exist
+redis> ZADD scores NX 100 "user1"
+(integer) 1
+
+# Only update if exists
+redis> ZADD scores XX 150 "user1"
+(integer) 0
+
+# Only update if new score is greater
+redis> ZADD scores GT 120 "user1"
+(integer) 0
+
+# Only update if new score is less
+redis> ZADD scores LT 90 "user1"
+(integer) 0
+
+# Return number of changed elements
+redis> ZADD scores CH 200 "user2" 300 "user3"
+(integer) 2
+
+# Increment score
+redis> ZADD scores INCR 10 "user1"
+"110"
+```
+
+### Range Queries
+
+```bash
+# Get by rank (with scores)
+redis> ZRANGE leaderboard 0 2 WITHSCORES
+1) "player1"
+2) "100"
+3) "player3"
+4) "150"
+5) "player2"
+6) "200"
+
+# Get in reverse order
+redis> ZREVRANGE leaderboard 0 1 WITHSCORES
+1) "player2"
+2) "200"
+3) "player3"
+4) "150"
+
+# Get by score
+redis> ZRANGEBYSCORE leaderboard 100 200
+1) "player1"
+2) "player3"
+3) "player2"
+
+# Get by score with limit
+redis> ZRANGEBYSCORE leaderboard 0 1000 LIMIT 0 10
+1) "player1"
+2) "player3"
+3) "player2"
+```
+
+### Score Operations
+
+```bash
+# Increment score
+redis> ZINCRBY leaderboard 50 "player1"
+"150"
+
+# Count members in score range
+redis> ZCOUNT leaderboard 100 200
+(integer) 2
+
+# Count members in lexicographic range
+redis> ZLEXCOUNT leaderboard [a [z
+(integer) 3
+```
+
+### Removal
+
+```bash
+# Remove by member
+redis> ZREM leaderboard "player1"
+(integer) 1
+
+# Remove by rank
+redis> ZREMRANGEBYRANK leaderboard 0 0
+(integer) 1
+
+# Remove by score
+redis> ZREMRANGEBYSCORE leaderboard 0 100
+(integer) 1
+
+# Pop highest/lowest
+redis> ZPOPMAX leaderboard 2
+1) "player2"
+2) "200"
+3) "player3"
+4) "150"
+
+redis> ZPOPMIN leaderboard
+1) "player1"
+2) "100"
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| ZADD | O(log N) | Add/update member |
+| ZREM | O(M log N) | M=members to remove |
+| ZSCORE | O(1) | Get score |
+| ZRANK | O(log N) | Get rank |
+| ZRANGE | O(log N + M) | M=results |
+| ZRANGEBYSCORE | O(log N + M) | M=results |
+| ZCOUNT | O(log N) | Count in range |
+| ZINCRBY | O(log N) | Increment score |
+| ZPOPMIN/ZPOPMAX | O(log N * M) | M=elements popped |
+
+## Patterns and Examples
+
+### Leaderboard
+
+```bash
+# Add player scores
+redis> ZADD game:leaderboard 1500 "alice" 2000 "bob" 1800 "charlie"
+(integer) 3
+
+# Update score after game
+redis> ZINCRBY game:leaderboard 100 "alice"
+"1600"
+
+# Get top 10 players
+redis> ZREVRANGE game:leaderboard 0 9 WITHSCORES
+1) "bob"
+2) "2000"
+3) "charlie"
+4) "1800"
+5) "alice"
+6) "1600"
+
+# Get player rank
+redis> ZREVRANK game:leaderboard "alice"
+(integer) 2
+
+# Get players with score above 1700
+redis> ZRANGEBYSCORE game:leaderboard 1700 +inf WITHSCORES
+1) "charlie"
+2) "1800"
+3) "bob"
+4) "2000"
+```
+
+### Priority Queue
+
+```bash
+# Add tasks with priority (lower = higher priority)
+redis> ZADD tasks 1 "critical_bug" 5 "feature" 3 "documentation"
+(integer) 3
+
+# Get highest priority task
+redis> ZPOPMIN tasks
+1) "critical_bug"
+2) "1"
+
+# Get next task
+redis> ZPOPMIN tasks
+1) "documentation"
+2) "3"
+```
+
+### Rate Limiting with Sliding Window
+
+```bash
+# Current timestamp
+# redis> TIME
+# 1) "1709467200"
+# 2) "0"
+
+# Add request with timestamp as score
+redis> ZADD ratelimit:user:123 1709467200 "req1"
+(integer) 1
+redis> ZADD ratelimit:user:123 1709467205 "req2"
+(integer) 1
+
+# Remove requests older than 60 seconds
+redis> ZREMRANGEBYSCORE ratelimit:user:123 0 1709467140
+(integer) 0
+
+# Count requests in window
+redis> ZCARD ratelimit:user:123
+(integer) 2
+
+# Check if under limit (e.g., 100 requests per minute)
+redis> ZCOUNT ratelimit:user:123 1709467140 +inf
+(integer) 2
+```
+
+### Time Series Events
+
+```bash
+# Store events with timestamps
+redis> ZADD events 1709467200 "user_login" 1709467210 "page_view" 1709467220 "purchase"
+(integer) 3
+
+# Get events in time range
+redis> ZRANGEBYSCORE events 1709467200 1709467215 WITHSCORES
+1) "user_login"
+2) "1709467200"
+3) "page_view"
+4) "1709467210"
+
+# Get recent events
+redis> ZREVRANGE events 0 9
+1) "purchase"
+2) "page_view"
+3) "user_login"
+```
+
+### Auto-complete with Ranking
+
+```bash
+# Store search terms with frequency
+redis> ZADD autocomplete 1000 "redis" 500 "redisearch" 200 "redistimeseries"
+(integer) 3
+
+# Increment when searched
+redis> ZINCRBY autocomplete 1 "redis"
+"1001"
+
+# Get top suggestions
+redis> ZREVRANGE autocomplete 0 4
+1) "redis"
+2) "redisearch"
+3) "redistimeseries"
+```
+
+### Top N Items
+
+```bash
+# Track popular articles
+redis> ZADD popular:articles 523 "article:123" 891 "article:456" 234 "article:789"
+(integer) 3
+
+# Increment view count
+redis> ZINCRBY popular:articles 1 "article:123"
+"524"
+
+# Get top 10 articles
+redis> ZREVRANGE popular:articles 0 9 WITHSCORES
+1) "article:456"
+2) "891"
+3) "article:123"
+4) "524"
+5) "article:789"
+6) "234"
+```
+
+## Internal Encoding
+
+Sorted sets use two encodings:
+
+- **listpack**: Small sorted sets (memory efficient)
+- **skiplist**: Larger sets (fast O(log N) operations)
+
+```bash
+redis> ZADD small 1 "a" 2 "b" 3 "c"
+(integer) 3
+redis> OBJECT ENCODING small
+"listpack"
+
+redis> ZADD large 1 "member1"
+# ... add many more members
+redis> OBJECT ENCODING large
+"skiplist"
+```
+
+Configuration:
+
+```conf
+# Max listpack entries/bytes before converting to skiplist
+zset-max-listpack-entries 128
+zset-max-listpack-value 64
+```
+
+## Lexicographic Ordering
+
+When all scores are the same, members are ordered lexicographically:
+
+```bash
+redis> ZADD words 0 "apple" 0 "banana" 0 "cherry"
+(integer) 3
+
+redis> ZRANGEBYLEX words [a [c
+1) "apple"
+2) "banana"
+
+redis> ZRANGEBYLEX words [b +
+1) "banana"
+2) "cherry"
+```
+
+<Note>
+Use lexicographic commands when you need alphabetical ordering without scores.
+</Note>
+
+## Best Practices
+
+1. **Use appropriate scores** - timestamps for time series, counts for rankings
+2. **Set expiration on temporary sorted sets** - cleanup old data
+3. **Use LIMIT** in range queries to prevent returning too many results
+4. **Consider ZPOPMIN/ZPOPMAX** for atomic pop operations
+5. **Trim sorted sets** periodically to prevent unbounded growth
+
+<Warning>
+Avoid storing very large sorted sets (over 1 million members) in a single key. Consider sharding by time period or category.
+</Warning>
+
+<Tip>
+For rate limiting, combine sorted sets with key expiration for automatic cleanup of old windows.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sorted Set Commands" href="/commands/sorted-sets">
+    Complete command reference
+  </Card>
+  <Card title="Streams" href="/data-types/streams">
+    For time-ordered messages
+  </Card>
+</CardGroup>

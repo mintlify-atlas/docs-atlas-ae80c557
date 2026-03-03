@@ -1,0 +1,474 @@
+---
+title: 'Redis Query Engine'
+description: 'Search and query hash and JSON documents with indexes, full-text search, and aggregations'
+---
+
+Redis Query Engine transforms Redis into a powerful document database and search engine. It allows you to create secondary indexes on hash and JSON documents, then perform complex queries with full-text search, filtering, aggregations, and vector similarity search.
+
+## Overview
+
+Redis Query Engine provides:
+
+- **Secondary Indexing**: Create indexes on hash and JSON document fields
+- **Full-Text Search**: Rich text search with stemming, phonetics, and fuzzy matching
+- **Vector Search**: Semantic similarity search for AI/ML applications
+- **Aggregations**: Group, reduce, and transform query results
+- **Geospatial Queries**: Search by location with radius and bounding box
+- **Auto-Complete**: Build suggestion engines
+
+<Warning>
+Redis Query Engine requires building Redis with modules enabled:
+
+```bash
+make BUILD_WITH_MODULES=yes
+```
+
+This feature is marked with an asterisk (*) in the README and is only available when compiled with module support.
+</Warning>
+
+## Creating Indexes
+
+### Index on Hash Documents
+
+```bash
+FT.CREATE idx:users 
+  ON HASH 
+  PREFIX 1 user: 
+  SCHEMA 
+    name TEXT SORTABLE 
+    email TAG 
+    age NUMERIC SORTABLE 
+    location GEO
+```
+
+This creates an index that automatically indexes all hashes with the `user:` prefix.
+
+### Index on JSON Documents
+
+```bash
+FT.CREATE idx:products 
+  ON JSON 
+  PREFIX 1 product: 
+  SCHEMA 
+    $.name AS name TEXT 
+    $.price AS price NUMERIC SORTABLE 
+    $.category AS category TAG 
+    $.description AS description TEXT
+```
+
+Use JSONPath expressions (`$.field`) to specify fields in JSON documents.
+
+## Field Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| **TEXT** | Full-text searchable | Descriptions, content |
+| **TAG** | Exact match, multiple values | Categories, tags |
+| **NUMERIC** | Numeric range queries | Prices, ages, scores |
+| **GEO** | Geospatial coordinates | Locations, stores |
+| **VECTOR** | Vector embeddings | Semantic search, AI |
+
+### Field Options
+
+- `SORTABLE`: Enable sorting on this field
+- `NOINDEX`: Store but don't index (for return only)
+- `NOSTEM`: Disable stemming for TEXT fields
+- `PHONETIC`: Enable phonetic matching
+- `WEIGHT`: Set field importance in ranking (default: 1.0)
+
+## Searching
+
+### Basic Text Search
+
+```bash
+FT.SEARCH idx:users "john"
+```
+
+Searches for "john" across all TEXT fields in the index.
+
+### Field-Specific Search
+
+```bash
+# Search in specific field
+FT.SEARCH idx:users "@name:john"
+
+# Multiple conditions
+FT.SEARCH idx:users "@name:john @age:[25 35]"
+```
+
+### Numeric Ranges
+
+```bash
+# Age between 25 and 35
+FT.SEARCH idx:users "@age:[25 35]"
+
+# Infinite ranges
+FT.SEARCH idx:products "@price:[100 +inf]"
+FT.SEARCH idx:products "@price:[-inf 50]"
+```
+
+### Tag Queries
+
+```bash
+# Exact tag match
+FT.SEARCH idx:products "@category:{electronics}"
+
+# Multiple tags (OR)
+FT.SEARCH idx:products "@category:{electronics|books}"
+
+# Multiple tags (AND)
+FT.SEARCH idx:products "@category:{electronics} @category:{sale}"
+```
+
+### Geospatial Queries
+
+```bash
+# Within 10km radius
+FT.SEARCH idx:users "@location:[{lon} {lat} 10 km]"
+
+# Example: Users within 5 miles of New York
+FT.SEARCH idx:users "@location:[-73.935242 40.730610 5 mi]"
+```
+
+## Query Syntax
+
+### Boolean Operators
+
+```bash
+# AND (implicit)
+FT.SEARCH idx:users "john smith"
+
+# OR
+FT.SEARCH idx:users "john|smith"
+
+# NOT
+FT.SEARCH idx:users "-john"
+
+# Grouping
+FT.SEARCH idx:users "(john|jane) smith"
+```
+
+### Phrase Search
+
+```bash
+# Exact phrase
+FT.SEARCH idx:products "\"gaming laptop\""
+
+# Phrase with slop (words can be apart by N positions)
+FT.SEARCH idx:products "gaming laptop"~2
+```
+
+### Prefix Matching
+
+```bash
+# Words starting with "comp"
+FT.SEARCH idx:products "comp*"
+```
+
+### Fuzzy Matching
+
+```bash
+# Levenshtein distance of 1
+FT.SEARCH idx:users "%john%"
+
+# Levenshtein distance of 2
+FT.SEARCH idx:users "%%john%%"
+```
+
+## Sorting and Pagination
+
+```bash
+# Sort by age descending
+FT.SEARCH idx:users "*" SORTBY age DESC
+
+# Paginate results (offset 10, limit 20)
+FT.SEARCH idx:users "*" LIMIT 10 20
+
+# Combined
+FT.SEARCH idx:users "@age:[25 35]" SORTBY name ASC LIMIT 0 10
+```
+
+## Returning Specific Fields
+
+```bash
+# Return only specific fields
+FT.SEARCH idx:users "john" RETURN 2 name email
+
+# Return all stored fields
+FT.SEARCH idx:users "john" RETURN 0
+```
+
+## Aggregations
+
+Perform complex data transformations and aggregations.
+
+### Group By
+
+```bash
+# Count users by location
+FT.AGGREGATE idx:users "*" 
+  GROUPBY 1 @location 
+  REDUCE COUNT 0 AS count
+```
+
+### Statistical Aggregations
+
+```bash
+# Average price by category
+FT.AGGREGATE idx:products "*" 
+  GROUPBY 1 @category 
+  REDUCE AVG 1 @price AS avg_price
+
+# Multiple aggregations
+FT.AGGREGATE idx:products "*" 
+  GROUPBY 1 @category 
+  REDUCE COUNT 0 AS count 
+  REDUCE AVG 1 @price AS avg_price 
+  REDUCE MIN 1 @price AS min_price 
+  REDUCE MAX 1 @price AS max_price
+```
+
+### Reducers
+
+| Reducer | Description | Example |
+|---------|-------------|----------|
+| `COUNT` | Count records | `REDUCE COUNT 0 AS total` |
+| `SUM` | Sum values | `REDUCE SUM 1 @price AS total_price` |
+| `AVG` | Average | `REDUCE AVG 1 @age AS avg_age` |
+| `MIN` | Minimum | `REDUCE MIN 1 @price AS min_price` |
+| `MAX` | Maximum | `REDUCE MAX 1 @age AS max_age` |
+| `STDDEV` | Standard deviation | `REDUCE STDDEV 1 @score AS stddev` |
+| `QUANTILE` | Percentile | `REDUCE QUANTILE 2 @price 0.95 AS p95` |
+| `TOLIST` | Collect values | `REDUCE TOLIST 1 @name AS names` |
+
+## Auto-Complete
+
+Build fast suggestion engines.
+
+### Add Suggestions
+
+```bash
+FT.SUGADD autocomplete "javascript" 10
+FT.SUGADD autocomplete "java" 8
+FT.SUGADD autocomplete "python" 9
+```
+
+The score (10, 8, 9) affects ranking.
+
+### Get Suggestions
+
+```bash
+# Get suggestions starting with "ja"
+FT.SUGGET autocomplete "ja" FUZZY MAX 5
+
+# Returns:
+1) "javascript"
+2) "java"
+```
+
+### Delete Suggestions
+
+```bash
+FT.SUGDEL autocomplete "javascript"
+```
+
+## Index Management
+
+### List Indexes
+
+```bash
+FT._LIST
+```
+
+### Get Index Info
+
+```bash
+FT.INFO idx:users
+```
+
+Returns index configuration, field definitions, and statistics.
+
+### Drop Index
+
+```bash
+# Drop index but keep documents
+FT.DROPINDEX idx:users
+
+# Drop index and delete all documents
+FT.DROPINDEX idx:users DD
+```
+
+### Alter Index
+
+Add new fields to an existing index:
+
+```bash
+FT.ALTER idx:users SCHEMA ADD bio TEXT
+```
+
+<Note>
+You cannot remove fields from an index. Create a new index instead.
+</Note>
+
+## Real-World Examples
+
+### E-commerce Product Search
+
+<Steps>
+
+<Step title="Create product index">
+
+```bash
+FT.CREATE idx:products 
+  ON JSON 
+  PREFIX 1 product: 
+  SCHEMA 
+    $.name AS name TEXT WEIGHT 2.0 
+    $.description AS description TEXT 
+    $.price AS price NUMERIC SORTABLE 
+    $.category AS category TAG SORTABLE 
+    $.brand AS brand TAG 
+    $.rating AS rating NUMERIC SORTABLE 
+    $.stock AS stock NUMERIC
+```
+</Step>
+
+<Step title="Add products">
+
+```bash
+JSON.SET product:1 $ '{"name":"Gaming Laptop","description":"High performance laptop for gaming","price":1299,"category":"electronics","brand":"TechCo","rating":4.5,"stock":15}'
+
+JSON.SET product:2 $ '{"name":"Wireless Mouse","description":"Ergonomic wireless mouse","price":29,"category":"electronics","brand":"TechCo","rating":4.2,"stock":50}'
+```
+</Step>
+
+<Step title="Search products">
+
+```bash
+# Search for laptops under $2000
+FT.SEARCH idx:products "laptop @price:[0 2000]" 
+  SORTBY rating DESC 
+  RETURN 4 name price rating brand
+
+# Filter by brand and category
+FT.SEARCH idx:products "@brand:{TechCo} @category:{electronics}" 
+  LIMIT 0 10
+```
+</Step>
+
+</Steps>
+
+### User Directory Search
+
+```bash
+# Create user index
+FT.CREATE idx:users 
+  ON HASH 
+  PREFIX 1 user: 
+  SCHEMA 
+    name TEXT SORTABLE PHONETIC dm:en 
+    email TAG 
+    department TAG 
+    location GEO 
+    join_date NUMERIC SORTABLE
+
+# Add users
+HSET user:1000 name "John Smith" email "john@example.com" 
+  department "engineering" location "-73.935242,40.730610" 
+  join_date 1609459200
+
+# Search with phonetic matching
+FT.SEARCH idx:users "%jon%"  # Matches "John" even with typo
+
+# Find nearby users
+FT.SEARCH idx:users "@location:[-73.935242 40.730610 5 km] @department:{engineering}"
+```
+
+### Content Management
+
+```bash
+# Create blog post index
+FT.CREATE idx:posts 
+  ON JSON 
+  PREFIX 1 post: 
+  SCHEMA 
+    $.title AS title TEXT WEIGHT 3.0 SORTABLE 
+    $.content AS content TEXT 
+    $.tags AS tags TAG 
+    $.author AS author TAG 
+    $.published AS published NUMERIC SORTABLE
+
+# Full-text search with faceted filtering
+FT.SEARCH idx:posts "redis database @tags:{tutorial}" 
+  SORTBY published DESC 
+  RETURN 3 title author published
+```
+
+## Performance Optimization
+
+### 1. Use TAG for Exact Matches
+
+TAG fields are faster for exact matching than TEXT:
+
+```bash
+# Faster
+email TAG
+
+# Slower
+email TEXT
+```
+
+### 2. Limit SORTABLE Fields
+
+Only mark fields as SORTABLE if you need to sort by them. SORTABLE fields use more memory.
+
+### 3. Use NOINDEX for Display-Only Fields
+
+```bash
+FT.CREATE idx:users ON HASH PREFIX 1 user: 
+  SCHEMA 
+    name TEXT 
+    profile_picture TAG NOINDEX  # Don't index, just return
+```
+
+### 4. Optimize Queries
+
+```bash
+# Bad: Wildcard searches are slow
+FT.SEARCH idx:users "*"
+
+# Good: Specific queries are fast
+FT.SEARCH idx:users "@age:[25 35]"
+```
+
+## Limitations
+
+<Warning>
+**Module Requirement**: Query Engine is only available when Redis is built with `BUILD_WITH_MODULES=yes`. Standard Redis builds do not include this functionality.
+</Warning>
+
+- Indexes are kept in memory alongside your data
+- Index updates are synchronous (blocking)
+- Large indexes may impact memory usage
+- Not all Redis commands work with indexed fields
+
+## Query Engine vs. Traditional Keys
+
+| Feature | Traditional | Query Engine |
+|---------|-------------|---------------|
+| **Access Pattern** | By key only | By any indexed field |
+| **Range Queries** | Limited | Full support |
+| **Full-Text Search** | No | Yes |
+| **Aggregations** | Manual | Built-in |
+| **Memory** | Keys only | Keys + indexes |
+| **Performance** | O(1) | O(log N) to O(N) |
+
+<Note>
+For simple key-value access, use traditional Redis commands. Use Query Engine when you need to search, filter, or aggregate across multiple fields.
+</Note>
+
+## See Also
+
+- [Vector Search](/features/vector-search) - Semantic similarity search for AI applications
+- [JSON Data Type](/features/json) - Native JSON document storage
+- [Time Series](/features/time-series) - Specialized time-series data handling

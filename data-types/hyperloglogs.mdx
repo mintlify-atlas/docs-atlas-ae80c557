@@ -1,0 +1,325 @@
+---
+title: HyperLogLog
+description: Probabilistic cardinality estimation using just 12KB to count billions of unique items
+---
+
+Redis HyperLogLog is a probabilistic data structure for counting unique elements with a standard error of 0.81%. It uses a fixed 12KB of memory regardless of cardinality, making it ideal for counting unique items at scale.
+
+## Use Cases
+
+- **Unique visitors**: Count unique IP addresses or user IDs
+- **Unique page views**: Track distinct viewers per page
+- **Unique search queries**: Count different search terms
+- **Ad impressions**: Measure unique users who saw ads
+- **Network traffic**: Count unique source IPs
+- **Sensor data**: Track unique device IDs
+
+## Key Commands
+
+### Basic Operations
+
+```bash
+# Add elements
+redis> PFADD unique:visitors "user:1" "user:2" "user:3"
+(integer) 1
+
+# Add duplicate (doesn't change count)
+redis> PFADD unique:visitors "user:1"
+(integer) 0
+
+# Get cardinality estimate
+redis> PFCOUNT unique:visitors
+(integer) 3
+
+# Add more elements
+redis> PFADD unique:visitors "user:4" "user:5"
+(integer) 1
+redis> PFCOUNT unique:visitors
+(integer) 5
+```
+
+### Merging HyperLogLogs
+
+```bash
+# Create multiple HyperLogLogs
+redis> PFADD visitors:page1 "user:1" "user:2" "user:3"
+(integer) 1
+redis> PFADD visitors:page2 "user:2" "user:3" "user:4"
+(integer) 1
+
+# Merge into new HyperLogLog
+redis> PFMERGE visitors:all visitors:page1 visitors:page2
+OK
+
+# Get merged count (deduplicates)
+redis> PFCOUNT visitors:all
+(integer) 4
+
+# Count multiple HyperLogLogs
+redis> PFCOUNT visitors:page1 visitors:page2
+(integer) 4
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| PFADD | O(1) | Add elements |
+| PFCOUNT | O(1) | Get cardinality (single) |
+| PFCOUNT multiple | O(N) | N=number of keys |
+| PFMERGE | O(N) | N=number of keys |
+
+## Memory Usage
+
+HyperLogLog uses exactly **12,288 bytes (12KB)** per key:
+
+```bash
+redis> PFADD hll "element1"
+(integer) 1
+redis> MEMORY USAGE hll
+(integer) 12344  # ~12KB
+
+# Add millions of elements - still 12KB
+redis> PFADD hll "element2" "element3" ... "element1000000"
+redis> MEMORY USAGE hll
+(integer) 12344  # Still ~12KB!
+```
+
+### Memory Comparison
+
+```bash
+# Track 1 million unique IDs
+
+# Set: ~15-20 MB
+redis> SADD unique_set user:1 user:2 ... user:1000000
+redis> MEMORY USAGE unique_set
+(integer) ~15000000  # ~15MB
+
+# Bitmap: 125 KB (for sequential IDs 0-1M)
+redis> SETBIT unique_bitmap 1000000 1
+redis> MEMORY USAGE unique_bitmap
+(integer) 125032  # ~125KB
+
+# HyperLogLog: 12 KB (any IDs)
+redis> PFADD unique_hll user:1 user:2 ... user:1000000
+redis> MEMORY USAGE unique_hll
+(integer) 12344  # ~12KB
+```
+
+## Accuracy
+
+Standard error: **±0.81%**
+
+```bash
+# Add 10,000 unique elements
+redis> PFADD test element:1 element:2 ... element:10000
+
+# Estimate (typically 9,919 to 10,081)
+redis> PFCOUNT test
+(integer) 10023  # Within 0.81% of 10,000
+
+# Add 1 million elements
+redis> PFADD large element:1 ... element:1000000
+redis> PFCOUNT large
+(integer) 1001234  # Typically within ~8,100 of actual
+```
+
+<Note>
+The error rate is consistent regardless of cardinality. Whether counting 100 or 1 billion items, the error stays at ±0.81%.
+</Note>
+
+## Patterns and Examples
+
+### Daily Unique Visitors
+
+```bash
+# Track unique visitors per day
+redis> PFADD visitors:2024-03-03 "ip:192.168.1.1"
+(integer) 1
+redis> PFADD visitors:2024-03-03 "ip:192.168.1.2"
+(integer) 1
+redis> PFADD visitors:2024-03-03 "ip:192.168.1.1"
+(integer) 0  # Duplicate
+
+# Get daily uniques
+redis> PFCOUNT visitors:2024-03-03
+(integer) 2
+
+# Set expiration
+redis> EXPIRE visitors:2024-03-03 2592000  # 30 days
+(integer) 1
+
+# Weekly uniques (merge days)
+redis> PFMERGE visitors:week:10 
+  visitors:2024-03-03 
+  visitors:2024-03-04 
+  visitors:2024-03-05 
+  visitors:2024-03-06 
+  visitors:2024-03-07 
+  visitors:2024-03-08 
+  visitors:2024-03-09
+OK
+redis> PFCOUNT visitors:week:10
+(integer) 8923
+```
+
+### Page View Analytics
+
+```bash
+# Track unique viewers per page
+redis> PFADD page:home:unique "user:123"
+(integer) 1
+redis> PFADD page:about:unique "user:123"
+(integer) 1
+redis> PFADD page:contact:unique "user:456"
+(integer) 1
+
+# Get unique viewers per page
+redis> PFCOUNT page:home:unique
+(integer) 1234
+
+# Total unique visitors across all pages
+redis> PFCOUNT page:home:unique page:about:unique page:contact:unique
+(integer) 2891
+```
+
+### Search Query Analytics
+
+```bash
+# Track unique search queries per day
+redis> PFADD searches:2024-03-03 "redis tutorial"
+(integer) 1
+redis> PFADD searches:2024-03-03 "redis commands"
+(integer) 1
+redis> PFADD searches:2024-03-03 "redis tutorial"  # Duplicate
+(integer) 0
+
+# Count unique queries
+redis> PFCOUNT searches:2024-03-03
+(integer) 2
+
+# Monthly unique queries
+redis> PFMERGE searches:2024-03 
+  searches:2024-03-01 
+  searches:2024-03-02 
+  ...
+  searches:2024-03-31
+OK
+redis> PFCOUNT searches:2024-03
+(integer) 45678
+```
+
+### A/B Testing
+
+```bash
+# Track unique users per experiment variant
+redis> PFADD experiment:checkout:variantA "user:123"
+(integer) 1
+redis> PFADD experiment:checkout:variantB "user:456"
+(integer) 1
+
+# Get experiment reach
+redis> PFCOUNT experiment:checkout:variantA
+(integer) 5234
+redis> PFCOUNT experiment:checkout:variantB
+(integer) 5189
+
+# Total experiment participants
+redis> PFCOUNT experiment:checkout:variantA experiment:checkout:variantB
+(integer) 10423
+```
+
+### Ad Campaign Tracking
+
+```bash
+# Track unique users who saw ads
+redis> PFADD campaign:spring2024:impressions "user:123"
+(integer) 1
+redis> PFADD campaign:spring2024:clicks "user:123"
+(integer) 1
+
+# Get metrics
+redis> PFCOUNT campaign:spring2024:impressions
+(integer) 123456
+redis> PFCOUNT campaign:spring2024:clicks
+(integer) 4567
+
+# CTR calculation: 4567/123456 = 3.7%
+```
+
+## Algorithm Details
+
+HyperLogLog uses:
+
+- **16,384 registers** (buckets)
+- **6-bit precision** per register
+- **MurmurHash64A** for hashing
+- **Sparse/Dense encoding** for memory optimization
+
+### Sparse vs Dense Encoding
+
+```bash
+# Small cardinality: sparse encoding (smaller)
+redis> PFADD small "element1" "element2"
+(integer) 1
+redis> MEMORY USAGE small
+(integer) 856  # Less than 12KB
+
+# Large cardinality: automatic conversion to dense
+redis> PFADD small element:1 element:2 ... element:10000
+redis> MEMORY USAGE small
+(integer) 12344  # Now 12KB
+```
+
+<Note>
+Redis automatically converts from sparse (variable size) to dense (12KB) encoding when beneficial for memory usage.
+</Note>
+
+## SIMD Optimizations
+
+HyperLogLog uses hardware acceleration:
+
+- **AVX2** instructions on modern Intel/AMD CPUs
+- **NEON** instructions on ARM processors
+- Significantly faster PFCOUNT operations
+
+## Best Practices
+
+1. **Use for counting only** - HyperLogLog can't retrieve individual elements
+2. **Merge related HLLs** - combine daily data into weekly/monthly
+3. **Set expiration** on time-based HLLs to save memory
+4. **Accept approximation** - perfect accuracy requires sets (more memory)
+5. **Use consistent hashing** - don't mix element formats
+
+<Warning>
+HyperLogLog can only estimate cardinality. You cannot retrieve individual elements, test membership, or get exact counts. Use sets if you need these features.
+</Warning>
+
+<Tip>
+For the best trade-off between memory and accuracy, HyperLogLog is hard to beat. At 12KB per key, you can track billions of unique items with less than 1% error.
+</Tip>
+
+## When to Use HyperLogLog
+
+| Requirement | HyperLogLog | Set | Bitmap |
+|-------------|-------------|-----|--------|
+| Count unique items | ✅ Best | ✅ | ✅ |
+| Exact count needed | ❌ (~0.81% error) | ✅ | ✅ |
+| Retrieve elements | ❌ | ✅ | ❌ |
+| Test membership | ❌ | ✅ | ✅ |
+| Memory (1M items) | 12 KB | 15-20 MB | 125 KB* |
+| Memory (1B items) | 12 KB | 15-20 GB | 125 MB* |
+| Best for | Massive scale | Exact counts | Sequential IDs |
+
+*Bitmap memory depends on highest ID, not count
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Probabilistic Structures" href="/features/probabilistic">
+    Bloom filters, Count-Min Sketch, and more
+  </Card>
+  <Card title="Bitmaps" href="/data-types/bitmaps">
+    For exact counting with dense IDs
+  </Card>
+</CardGroup>

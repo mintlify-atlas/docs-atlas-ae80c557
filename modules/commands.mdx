@@ -1,0 +1,454 @@
+---
+title: 'Registering Module Commands'
+description: 'Advanced command registration, argument parsing, and command features'
+---
+
+This guide covers advanced techniques for registering and implementing Redis module commands, including argument validation, key discovery, and command metadata.
+
+## Command Registration
+
+Register commands using `RedisModule_CreateCommand`:
+
+```c
+int RedisModule_CreateCommand(
+    RedisModuleCtx *ctx,
+    const char *name,
+    RedisModuleCmdFunc cmdfunc,
+    const char *strflags,
+    int firstkey,
+    int lastkey,
+    int keystep
+)
+```
+
+### Basic Example
+
+```c
+if (RedisModule_CreateCommand(ctx, "mymodule.set",
+    MyModuleSet_RedisCommand,
+    "write deny-oom",
+    1, 1, 1) == REDISMODULE_ERR)
+    return REDISMODULE_ERR;
+```
+
+## Command Flags
+
+Command flags control behavior and access control:
+
+### Access Flags
+
+- `"write"` - Command modifies data (requires `REDISMODULE_WRITE` key access)
+- `"readonly"` - Command only reads data
+- `"admin"` - Administrative command (requires admin privileges)
+
+### Memory Flags
+
+- `"deny-oom"` - Deny command when Redis is out of memory
+- `"allow-oom"` - Allow even when out of memory
+
+### Loading Flags
+
+- `"allow-loading"` - Allow during dataset loading
+- `"allow-stale"` - Allow on stale replica
+
+### Visibility Flags
+
+- `"no-monitor"` - Don't show command in MONITOR
+- `"no-slowlog"` - Don't log in slow log
+- `"no-auth"` - Don't require authentication
+
+### Performance Flags
+
+- `"fast"` - Command is O(1) or very fast
+- `"slow"` - Command may be slow
+
+### Special Flags
+
+- `"blocking"` - Command may block
+- `"may-replicate"` - Command may call `RedisModule_Replicate`
+- `"getkeys-api"` - Uses `RedisModule_KeyAtPos` for dynamic key discovery
+- `"getchannels-api"` - Uses `RedisModule_ChannelAtPosWithFlags` for channel discovery
+- `"no-cluster"` - Disable command in cluster mode
+- `"no-mandatory-keys"` - Command may have no keys
+- `"allow-busy"` - Allow when server is busy
+- `"internal"` - Internal command, not shown in command docs
+
+## Key Position Arguments
+
+The `firstkey`, `lastkey`, and `keystep` parameters tell Redis which arguments are keys:
+
+```c
+// Command: SET key value
+RedisModule_CreateCommand(ctx, "set", SetCmd, "write", 1, 1, 1);
+// Key at position 1
+
+// Command: MSET key1 value1 key2 value2 ...
+RedisModule_CreateCommand(ctx, "mset", MsetCmd, "write", 1, -1, 2);
+// Keys start at position 1, go to the end (-1), step by 2
+
+// Command: PUBLISH channel message (no keys)
+RedisModule_CreateCommand(ctx, "publish", PublishCmd, "pubsub", 0, 0, 0);
+// No keys
+```
+
+### Special Values
+
+- `firstkey = 0` - No keys
+- `lastkey = -1` - Keys continue to end of arguments
+- `keystep` - Distance between consecutive keys
+
+## Dynamic Key Discovery
+
+For commands where key positions depend on arguments, use `"getkeys-api"`:
+
+```c
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (RedisModule_CreateCommand(ctx, "mymodule.multi",
+        MyModuleMulti_RedisCommand,
+        "write getkeys-api",
+        0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+    return REDISMODULE_OK;
+}
+
+int MyModuleMulti_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    // Check if this is a key discovery call
+    if (RedisModule_IsKeysPositionRequest(ctx)) {
+        // Example: MYMODULE.MULTI key1 key2 ... STOREAS result_key
+        for (int i = 1; i < argc; i++) {
+            const char *arg = RedisModule_StringPtrLen(argv[i], NULL);
+            if (strcmp(arg, "STOREAS") == 0) {
+                // Mark result key as write key
+                RedisModule_KeyAtPosWithFlags(ctx, i + 1, 
+                    REDISMODULE_CMD_KEY_RW | REDISMODULE_CMD_KEY_UPDATE);
+                break;
+            } else {
+                // Mark input keys as read keys
+                RedisModule_KeyAtPosWithFlags(ctx, i, 
+                    REDISMODULE_CMD_KEY_RO | REDISMODULE_CMD_KEY_ACCESS);
+            }
+        }
+        return REDISMODULE_OK;
+    }
+    
+    // Normal command execution
+    // ...
+}
+```
+
+### Key Spec Flags
+
+When using `RedisModule_KeyAtPosWithFlags`, specify key access patterns:
+
+- `REDISMODULE_CMD_KEY_RO` - Read-only key
+- `REDISMODULE_CMD_KEY_RW` - Read-write key
+- `REDISMODULE_CMD_KEY_OW` - Overwrite key (delete and recreate)
+- `REDISMODULE_CMD_KEY_RM` - Remove key
+- `REDISMODULE_CMD_KEY_ACCESS` - Key is accessed
+- `REDISMODULE_CMD_KEY_UPDATE` - Key is updated
+- `REDISMODULE_CMD_KEY_INSERT` - Elements inserted to key
+- `REDISMODULE_CMD_KEY_DELETE` - Elements deleted from key
+
+## Channel Discovery
+
+For pub/sub commands, use `"getchannels-api"`:
+
+```c
+int MyModulePubSub_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (RedisModule_IsChannelsPositionRequest(ctx)) {
+        // MYMODULE.PUBLISH channel message
+        RedisModule_ChannelAtPosWithFlags(ctx, 1, 
+            REDISMODULE_CMD_CHANNEL_PUBLISH);
+        return REDISMODULE_OK;
+    }
+    
+    // Normal execution
+    // ...
+}
+```
+
+Channel flags:
+- `REDISMODULE_CMD_CHANNEL_SUBSCRIBE` - Command subscribes to channel
+- `REDISMODULE_CMD_CHANNEL_UNSUBSCRIBE` - Command unsubscribes from channel
+- `REDISMODULE_CMD_CHANNEL_PUBLISH` - Command publishes to channel
+- `REDISMODULE_CMD_CHANNEL_PATTERN` - Pattern matching (like PSUBSCRIBE)
+
+## Subcommands
+
+Create command hierarchies with subcommands:
+
+```c
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (RedisModule_Init(ctx, "mymodule", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    // Create parent command
+    RedisModuleCommand *parent = RedisModule_GetCommand(ctx, "mymodule.config");
+    if (parent == NULL) {
+        if (RedisModule_CreateCommand(ctx, "mymodule.config",
+            MyModuleConfig_RedisCommand, "admin", 0, 0, 0) == REDISMODULE_ERR)
+            return REDISMODULE_ERR;
+        parent = RedisModule_GetCommand(ctx, "mymodule.config");
+    }
+
+    // Create subcommands
+    if (RedisModule_CreateSubcommand(parent, "get",
+        MyModuleConfigGet_RedisCommand, "admin", 0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    if (RedisModule_CreateSubcommand(parent, "set",
+        MyModuleConfigSet_RedisCommand, "admin", 0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    return REDISMODULE_OK;
+}
+```
+
+Usage:
+```bash
+redis-cli MYMODULE.CONFIG GET option-name
+redis-cli MYMODULE.CONFIG SET option-name value
+```
+
+## Command Metadata
+
+Provide detailed command information for `COMMAND` and help text:
+
+```c
+static const RedisModuleCommandArg incr_args[] = {
+    {"key", REDISMODULE_ARG_TYPE_KEY, -1, NULL, 
+     "Key to increment", NULL, CMD_ARG_NONE, NULL, NULL},
+    {"amount", REDISMODULE_ARG_TYPE_INTEGER, -1, NULL,
+     "Increment amount", NULL, CMD_ARG_OPTIONAL, NULL, NULL}
+};
+
+static const RedisModuleCommandKeySpec incr_keyspecs[] = {
+    {
+        .notes = "RW Access",
+        .flags = REDISMODULE_CMD_KEY_RW | REDISMODULE_CMD_KEY_UPDATE,
+        .begin_search_type = REDISMODULE_KSPEC_BS_INDEX,
+        .bs.index.pos = 1,
+        .find_keys_type = REDISMODULE_KSPEC_FK_RANGE,
+        .fk.range.lastkey = 0,
+        .fk.range.keystep = 1,
+        .fk.range.limit = 0
+    }
+};
+
+int RegisterIncrCommand(RedisModuleCtx *ctx) {
+    if (RedisModule_CreateCommand(ctx, "mymodule.incr",
+        MyModuleIncr_RedisCommand, "write deny-oom fast",
+        1, 1, 1) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    RedisModuleCommand *cmd = RedisModule_GetCommand(ctx, "mymodule.incr");
+    
+    RedisModuleCommandInfo info = {
+        .version = REDISMODULE_COMMAND_INFO_VERSION,
+        .summary = "Increments a counter by a specified amount",
+        .complexity = "O(1)",
+        .since = "1.0.0",
+        .history = NULL,
+        .tips = "request_policy:all_shards response_policy:agg_sum",
+        .arity = -2,  // Variable arity: at least 2 args (command + key)
+        .key_specs = (RedisModuleCommandKeySpec*)incr_keyspecs,
+        .args = (RedisModuleCommandArg*)incr_args
+    };
+    
+    if (RedisModule_SetCommandInfo(cmd, &info) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+        
+    return REDISMODULE_OK;
+}
+```
+
+## Argument Validation
+
+Validate arguments before processing:
+
+```c
+int MyCommand_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    // Check argument count
+    if (argc < 3 || argc > 5) {
+        return RedisModule_WrongArity(ctx);
+    }
+    
+    RedisModule_AutoMemory(ctx);
+    
+    // Parse integer argument
+    long long value;
+    if (RedisModule_StringToLongLong(argv[2], &value) != REDISMODULE_OK) {
+        return RedisModule_ReplyWithError(ctx, 
+            "ERR value is not an integer or out of range");
+    }
+    
+    // Parse optional flags
+    int nx = 0, xx = 0;
+    for (int i = 3; i < argc; i++) {
+        const char *opt = RedisModule_StringPtrLen(argv[i], NULL);
+        if (strcasecmp(opt, "NX") == 0) {
+            nx = 1;
+        } else if (strcasecmp(opt, "XX") == 0) {
+            xx = 1;
+        } else {
+            return RedisModule_ReplyWithError(ctx, "ERR syntax error");
+        }
+    }
+    
+    if (nx && xx) {
+        return RedisModule_ReplyWithError(ctx, 
+            "ERR NX and XX are mutually exclusive");
+    }
+    
+    // Command implementation
+    // ...
+}
+```
+
+## ACL Categories
+
+Assign commands to ACL categories:
+
+```c
+int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    // Create a custom ACL category
+    if (RedisModule_AddACLCategory(ctx, "mymodule") == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    // Register command
+    if (RedisModule_CreateCommand(ctx, "mymodule.set",
+        MyModuleSet_RedisCommand, "write", 1, 1, 1) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    // Assign to categories
+    RedisModuleCommand *cmd = RedisModule_GetCommand(ctx, "mymodule.set");
+    if (RedisModule_SetCommandACLCategories(cmd, "mymodule write") == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    return REDISMODULE_OK;
+}
+```
+
+ACL categories allow fine-grained access control:
+```bash
+# Allow user to run only mymodule commands
+ACL SETUSER alice on >password +@mymodule -@all
+```
+
+## Replication and AOF
+
+Ensure changes propagate correctly:
+
+### Replicate Verbatim
+
+```c
+// Replicate the exact command as received
+RedisModule_ReplicateVerbatim(ctx);
+```
+
+### Replicate Custom Command
+
+```c
+// Replicate a different command
+RedisModule_Replicate(ctx, "DEL", "s", keyname);
+RedisModule_Replicate(ctx, "SET", "sl", keyname, value);
+```
+
+Format specifiers:
+- `s` - RedisModuleString
+- `c` - C string (null-terminated)
+- `l` - long long
+- `b` - buffer (requires size)
+- `v` - array of RedisModuleString (requires count)
+
+### Prevent Replication
+
+```c
+// Don't replicate this command (read-only or internal)
+// Simply don't call Replicate functions
+```
+
+## Error Responses
+
+Provide clear error messages:
+
+```c
+// Generic errors
+return RedisModule_ReplyWithError(ctx, "ERR something went wrong");
+
+// Formatted errors
+return RedisModule_ReplyWithErrorFormat(ctx, 
+    "ERR expected value between %lld and %lld", min, max);
+
+// Wrong type error
+return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+
+// Wrong arity (argument count)
+return RedisModule_WrongArity(ctx);
+```
+
+## Blocking Commands
+
+Implement commands that wait for events (covered in detail in blocking API docs):
+
+```c
+RedisModule_CreateCommand(ctx, "mymodule.wait",
+    MyModuleWait_RedisCommand,
+    "blocking",  // Mark as blocking
+    0, 0, 0);
+```
+
+## Best Practices
+
+<Warning>
+**Command Naming**
+
+Use dot notation to namespace commands: `mymodule.command`. This prevents naming conflicts with Redis core commands and other modules.
+</Warning>
+
+<Warning>
+**Key Access Modes**
+
+Always open keys with the correct mode:
+- Use `REDISMODULE_READ` for read-only access
+- Use `REDISMODULE_WRITE` for modifications
+- Never assume a key's type without checking
+</Warning>
+
+<Warning>
+**Replication**
+
+Always replicate write commands. Forgetting to replicate causes data inconsistency between master and replicas.
+</Warning>
+
+## Testing Commands
+
+Test with redis-cli:
+
+```bash
+# Test basic functionality
+redis-cli MYMODULE.SET mykey 100
+redis-cli MYMODULE.GET mykey
+
+# Test error handling
+redis-cli MYMODULE.SET
+# (error) ERR wrong number of arguments
+
+redis-cli MYMODULE.SET mykey invalid
+# (error) ERR value is not an integer
+
+# Test with ACLs
+redis-cli ACL SETUSER testuser on >pass +@mymodule
+redis-cli --user testuser --pass pass MYMODULE.SET key 100
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Built-in Modules" icon="puzzle-piece" href="/modules/built-in-modules">
+    Explore real-world module implementations
+  </Card>
+  <Card title="Custom Data Types" icon="database" href="/modules/data-types">
+    Create complex data structures
+  </Card>
+</CardGroup>

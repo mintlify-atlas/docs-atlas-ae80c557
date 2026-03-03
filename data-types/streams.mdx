@@ -1,0 +1,319 @@
+---
+title: Streams
+description: Append-only log with consumer groups for event sourcing, message queues, and time-series data
+---
+
+Redis Streams are append-only log data structures with unique IDs, consumer groups, and acknowledgments. They're designed for high-throughput message processing and event sourcing.
+
+## Use Cases
+
+- **Event sourcing**: Immutable event logs
+- **Message queues**: Multiple consumers with acknowledgments
+- **Activity feeds**: User actions and timeline events
+- **Sensor data**: IoT device telemetry
+- **Audit logs**: System events and user actions
+- **Change data capture**: Database change streams
+
+## Key Concepts
+
+- **Entry**: A single message with ID and field-value pairs
+- **Entry ID**: Timestamp-sequence format (1709467200000-0)
+- **Consumer Group**: Multiple consumers reading different messages
+- **Consumer**: Individual reader within a group
+- **Pending Entry List (PEL)**: Unacknowledged messages
+
+## Key Commands
+
+### Adding Entries
+
+```bash
+# Add entry with auto-generated ID
+redis> XADD events * user "alice" action "login" timestamp "1709467200"
+"1709467200000-0"
+
+# Add with custom ID
+redis> XADD events 1709467210000-0 user "bob" action "purchase"
+"1709467210000-0"
+
+# Add with maxlen (trim old entries)
+redis> XADD events MAXLEN ~ 1000 * user "charlie" action "logout"
+"1709467220000-0"
+
+# Add only if ID is greater
+redis> XADD events 1709467220000-1 user "alice" action "view"
+"1709467220000-1"
+```
+
+### Reading Entries
+
+```bash
+# Read from beginning
+redis> XREAD STREAMS events 0
+1) 1) "events"
+   2) 1) 1) "1709467200000-0"
+         2) 1) "user"
+            2) "alice"
+            3) "action"
+            4) "login"
+
+# Read new entries (blocking)
+redis> XREAD BLOCK 5000 STREAMS events $
+(nil)  # Returns when new entries arrive or timeout
+
+# Read with count limit
+redis> XREAD COUNT 10 STREAMS events 0
+```
+
+### Range Queries
+
+```bash
+# Get all entries
+redis> XRANGE events - +
+1) 1) "1709467200000-0"
+   2) 1) "user"
+      2) "alice"
+      3) "action"
+      4) "login"
+
+# Get specific range
+redis> XRANGE events 1709467200000 1709467210000
+
+# Get last N entries
+redis> XREVRANGE events + - COUNT 10
+
+# Get stream length
+redis> XLEN events
+(integer) 3
+```
+
+### Consumer Groups
+
+```bash
+# Create consumer group
+redis> XGROUP CREATE events workers 0
+OK
+
+# Create from latest
+redis> XGROUP CREATE events processors $
+OK
+
+# Read as consumer
+redis> XREADGROUP GROUP workers consumer1 COUNT 1 STREAMS events >
+1) 1) "events"
+   2) 1) 1) "1709467200000-0"
+         2) 1) "user"
+            2) "alice"
+
+# Acknowledge message
+redis> XACK events workers 1709467200000-0
+(integer) 1
+
+# Check pending messages
+redis> XPENDING events workers
+1) (integer) 2
+2) "1709467210000-0"
+3) "1709467220000-0"
+4) 1) 1) "consumer1"
+      2) "2"
+```
+
+### Stream Management
+
+```bash
+# Delete entries
+redis> XDEL events 1709467200000-0
+(integer) 1
+
+# Trim by count
+redis> XTRIM events MAXLEN 1000
+(integer) 523
+
+# Trim by ID
+redis> XTRIM events MINID 1709467200000
+(integer) 10
+
+# Get stream info
+redis> XINFO STREAM events
+```
+
+## Time Complexity
+
+| Command | Time Complexity | Description |
+|---------|-----------------|-------------|
+| XADD | O(1) | Append entry |
+| XREAD | O(N) | N=entries returned |
+| XRANGE | O(N) | N=entries in range |
+| XLEN | O(1) | Get stream length |
+| XREADGROUP | O(M) | M=entries returned |
+| XACK | O(1) | Acknowledge entry |
+| XPENDING | O(N) | N=pending entries |
+| XDEL | O(1) | Delete entry |
+| XTRIM | O(N) | N=entries removed |
+
+## Patterns and Examples
+
+### Event Sourcing
+
+```bash
+# Store events
+redis> XADD orders * order_id "1001" event "created" amount "99.99"
+"1709467200000-0"
+redis> XADD orders * order_id "1001" event "paid" payment_id "pay_123"
+"1709467205000-0"
+redis> XADD orders * order_id "1001" event "shipped" tracking "TRACK123"
+"1709467300000-0"
+
+# Replay order history
+redis> XRANGE orders - +
+1) 1) "1709467200000-0"
+   2) 1) "order_id" 2) "1001" 3) "event" 4) "created" ...
+2) 1) "1709467205000-0"
+   2) 1) "order_id" 2) "1001" 3) "event" 4) "paid" ...
+3) 1) "1709467300000-0"
+   2) 1) "order_id" 2) "1001" 3) "event" 4) "shipped" ...
+```
+
+### Message Queue with Consumer Groups
+
+```bash
+# Producer: Add tasks
+redis> XADD tasks * type "email" recipient "user@example.com" subject "Welcome"
+"1709467200000-0"
+
+# Create consumer group
+redis> XGROUP CREATE tasks workers 0
+OK
+
+# Consumer 1: Read tasks
+redis> XREADGROUP GROUP workers worker1 COUNT 1 BLOCK 5000 STREAMS tasks >
+1) 1) "tasks"
+   2) 1) 1) "1709467200000-0"
+         2) 1) "type" 2) "email" ...
+
+# Process and acknowledge
+redis> XACK tasks workers 1709467200000-0
+(integer) 1
+
+# Consumer 2: Read different tasks
+redis> XREADGROUP GROUP workers worker2 COUNT 1 STREAMS tasks >
+```
+
+### Failed Message Recovery
+
+```bash
+# Check pending messages (unacknowledged for over 60 seconds)
+redis> XPENDING tasks workers - + 10 60000
+1) 1) "1709467200000-0"
+   2) "worker1"
+   3) (integer) 65000
+   4) (integer) 1
+
+# Claim stuck message
+redis> XCLAIM tasks workers worker2 60000 1709467200000-0
+1) 1) "1709467200000-0"
+   2) 1) "type" 2) "email" ...
+
+# Or use auto-claim (Redis 6.2+)
+redis> XAUTOCLAIM tasks workers worker2 60000 0 COUNT 10
+```
+
+### Sensor Data Collection
+
+```bash
+# Add sensor readings
+redis> XADD sensors:temp:room1 * value "22.5" unit "celsius"
+"1709467200000-0"
+redis> XADD sensors:temp:room1 * value "22.7" unit "celsius"
+"1709467260000-0"
+
+# Trim old data (keep last 24 hours)
+redis> XTRIM sensors:temp:room1 MINID 1709380800000
+(integer) 145
+
+# Get recent readings
+redis> XREVRANGE sensors:temp:room1 + - COUNT 10
+```
+
+### Real-time Activity Feed
+
+```bash
+# Add user activities
+redis> XADD feed:user:123 MAXLEN ~ 1000 * action "liked" post_id "456"
+"1709467200000-0"
+redis> XADD feed:user:123 MAXLEN ~ 1000 * action "commented" post_id "789"
+"1709467210000-0"
+
+# Get latest activities
+redis> XREVRANGE feed:user:123 + - COUNT 20
+
+# Stream to followers
+redis> XREAD COUNT 10 STREAMS feed:user:123 feed:user:456 0 0
+```
+
+## Stream Internals
+
+### Entry ID Format
+
+```
+<millisecondsTime>-<sequenceNumber>
+1709467200000-0
+│              │
+│              └─ Sequence (0, 1, 2, ...)
+└──────────────── Unix timestamp in milliseconds
+```
+
+### Special IDs
+
+- `*`: Auto-generate ID
+- `-`: Minimum ID (start of stream)
+- `+`: Maximum ID (end of stream)
+- `$`: Read only new entries
+- `>`: Read never-delivered entries (consumer groups)
+
+### Radix Tree Structure
+
+Streams use a radix tree of listpacks:
+
+- **Efficient memory**: Compressed storage
+- **Fast appends**: O(1) at end
+- **Range queries**: Optimized for time-ordered access
+
+## Best Practices
+
+1. **Use consumer groups** for distributed processing
+2. **Set MAXLEN** to prevent unbounded growth
+3. **Acknowledge messages** after successful processing
+4. **Monitor pending messages** for stuck consumers
+5. **Use blocking reads** for real-time consumption
+6. **Trim periodically** to manage memory
+
+<Warning>
+Without trimming, streams can grow indefinitely. Use MAXLEN or MINID to cap stream size based on your retention requirements.
+</Warning>
+
+<Tip>
+Use approximate trimming (MAXLEN ~) for better performance - it's more efficient than exact trimming.
+</Tip>
+
+## Streams vs Other Types
+
+| Feature | Lists | Pub/Sub | Streams |
+|---------|-------|---------|--------|
+| Persistence | Yes | No | Yes |
+| Entry IDs | No | No | Yes |
+| Consumer groups | No | No | Yes |
+| Acknowledgments | No | No | Yes |
+| History | Yes | No | Yes |
+| Blocking reads | Yes | Yes | Yes |
+| Best for | Simple queues | Fire-and-forget | Reliable messaging |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Stream Commands" href="/commands/streams">
+    Complete command reference
+  </Card>
+  <Card title="Pub/Sub" href="/features/pubsub">
+    For fire-and-forget messaging
+  </Card>
+</CardGroup>

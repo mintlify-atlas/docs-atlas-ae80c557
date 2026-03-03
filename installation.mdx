@@ -1,0 +1,435 @@
+---
+title: Installation
+description: Install Redis on your platform using Docker, package managers, or by building from source
+---
+
+There are several ways to install Redis depending on your needs and platform.
+
+## Quick installation methods
+
+<Tip>
+If you want to get up and running quickly without building from source, use one of these methods.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Docker" icon="docker">
+    Fastest way to get started
+    
+    ```bash
+    docker run -d -p 6379:6379 redis:latest
+    ```
+  </Card>
+  
+  <Card title="Redis Cloud" icon="cloud">
+    Fully managed Redis service
+    
+    [Get started →](https://cloud.redis.io/)
+  </Card>
+</CardGroup>
+
+### Package managers
+
+Install Redis using your system's package manager:
+
+<CodeGroup>
+```bash Homebrew (macOS)
+brew install redis
+brew services start redis
+```
+
+```bash Snap (Linux)
+sudo snap install redis
+```
+
+```bash APT (Debian/Ubuntu)
+sudo apt-get update
+sudo apt-get install redis-server
+sudo systemctl start redis-server
+```
+</CodeGroup>
+
+<Note>
+Package manager installations may not include the latest Redis features or modules. For access to all data structures and Redis Query Engine, [build from source](#build-from-source).
+</Note>
+
+## Docker installation
+
+Redis provides official Docker images for both Alpine and Debian:
+
+<Steps>
+  <Step title="Pull the Redis image">
+    ```bash
+    docker pull redis:latest
+    ```
+  </Step>
+  
+  <Step title="Run Redis in a container">
+    ```bash
+    docker run -d -p 6379:6379 --name my-redis redis:latest
+    ```
+  </Step>
+  
+  <Step title="Connect with redis-cli">
+    ```bash
+    docker exec -it my-redis redis-cli
+    ```
+  </Step>
+</Steps>
+
+Learn more about [official Redis Docker images](https://hub.docker.com/_/redis).
+
+## Build from source
+
+Building Redis from source gives you access to all features, including JSON, time series, Bloom filters, and Redis Query Engine.
+
+<Warning>
+Building with `BUILD_WITH_MODULES=yes` enables all data structures and Redis Query Engine, but is not supported on 32-bit systems.
+</Warning>
+
+### Prerequisites by platform
+
+Select your platform for detailed instructions:
+
+<CardGroup cols={2}>
+  <Card title="Ubuntu 24.04" icon="ubuntu">
+    Latest Ubuntu LTS with modern toolchain
+  </Card>
+  
+  <Card title="Ubuntu 22.04" icon="ubuntu">
+    Ubuntu Jammy LTS release
+  </Card>
+  
+  <Card title="Debian 11/12" icon="debian">
+    Bullseye and Bookworm releases
+  </Card>
+  
+  <Card title="macOS" icon="apple">
+    macOS 13 (Ventura) and 14 (Sonoma)
+  </Card>
+</CardGroup>
+
+### Ubuntu 24.04 (Noble)
+
+<Steps>
+  <Step title="Install dependencies">
+    Update your package lists and install the necessary development tools:
+    
+    ```bash
+    apt-get update
+    apt-get install -y sudo
+    sudo apt-get install -y --no-install-recommends ca-certificates wget \
+      dpkg-dev gcc g++ libc6-dev libssl-dev make git cmake python3 \
+      python3-pip python3-venv python3-dev unzip rsync clang automake \
+      autoconf libtool
+    ```
+  </Step>
+  
+  <Step title="Download Redis source">
+    Download a specific version from GitHub (replace `<version>` with the desired version, e.g., `8.0.0`):
+    
+    ```bash
+    cd /usr/src
+    wget -O redis-<version>.tar.gz \
+      https://github.com/redis/redis/archive/refs/tags/<version>.tar.gz
+    ```
+  </Step>
+  
+  <Step title="Extract the archive">
+    ```bash
+    cd /usr/src
+    tar xvf redis-<version>.tar.gz
+    rm redis-<version>.tar.gz
+    ```
+  </Step>
+  
+  <Step title="Build Redis with all modules">
+    Set environment variables and compile:
+    
+    ```bash
+    cd /usr/src/redis-<version>
+    export BUILD_TLS=yes BUILD_WITH_MODULES=yes \
+      INSTALL_RUST_TOOLCHAIN=yes DISABLE_WERRORS=yes
+    make -j "$(nproc)" all
+    ```
+    
+    <Note>
+    The `-j "$(nproc)"` flag enables parallel compilation using all available CPU cores.
+    </Note>
+  </Step>
+  
+  <Step title="Run Redis">
+    ```bash
+    cd /usr/src/redis-<version>
+    ./src/redis-server redis-full.conf
+    ```
+  </Step>
+</Steps>
+
+### Ubuntu 22.04 (Jammy)
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    apt-get update
+    apt-get install -y sudo
+    sudo apt-get install -y --no-install-recommends ca-certificates wget \
+      dpkg-dev gcc g++ libc6-dev libssl-dev make git cmake python3 \
+      python3-pip python3-venv python3-dev unzip rsync clang automake \
+      autoconf libtool
+    ```
+  </Step>
+  
+  <Step title="Install CMake">
+    Install CMake using pip3 and link it for system-wide access:
+    
+    ```bash
+    pip3 install cmake==3.31.6
+    sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
+    cmake --version
+    ```
+    
+    <Warning>
+    CMake version 3.31.6 is the latest supported version. Newer versions cannot be used.
+    </Warning>
+  </Step>
+  
+  <Step title="Download and build Redis">
+    Follow steps 2-5 from the Ubuntu 24.04 instructions above.
+  </Step>
+</Steps>
+
+### Debian 11 (Bullseye) / 12 (Bookworm)
+
+The Debian build process is identical to Ubuntu 22.04. Follow the [Ubuntu 22.04 instructions](#ubuntu-2204-jammy) above.
+
+<Note>
+Tested with Docker images:
+- debian:bullseye
+- debian:bullseye-slim
+- debian:bookworm
+- debian:bookworm-slim
+</Note>
+
+### macOS 13 (Ventura) and 14 (Sonoma)
+
+<Steps>
+  <Step title="Install Homebrew">
+    If Homebrew is not already installed, follow the installation instructions at [brew.sh](https://brew.sh/).
+  </Step>
+  
+  <Step title="Install required packages">
+    ```bash
+    export HOMEBREW_NO_AUTO_UPDATE=1
+    brew update
+    brew install coreutils make openssl llvm@18 cmake gnu-sed \
+      automake libtool wget
+    ```
+  </Step>
+  
+  <Step title="Install Rust">
+    Rust is required to build the JSON module:
+    
+    ```bash
+    RUST_INSTALLER=rust-1.80.1-$(if [ "$(uname -m)" = "arm64" ]; then \
+      echo "aarch64"; else echo "x86_64"; fi)-apple-darwin
+    wget --quiet -O ${RUST_INSTALLER}.tar.xz \
+      https://static.rust-lang.org/dist/${RUST_INSTALLER}.tar.xz
+    tar -xf ${RUST_INSTALLER}.tar.xz
+    (cd ${RUST_INSTALLER} && sudo ./install.sh)
+    ```
+  </Step>
+  
+  <Step title="Download Redis source">
+    ```bash
+    cd ~/src
+    wget -O redis-<version>.tar.gz \
+      https://github.com/redis/redis/archive/refs/tags/<version>.tar.gz
+    tar xvf redis-<version>.tar.gz
+    rm redis-<version>.tar.gz
+    ```
+  </Step>
+  
+  <Step title="Build Redis">
+    ```bash
+    cd ~/src/redis-<version>
+    export HOMEBREW_PREFIX="$(brew --prefix)"
+    export BUILD_WITH_MODULES=yes BUILD_TLS=yes DISABLE_WERRORS=yes
+    PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/llvm@18/bin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
+    export LDFLAGS="-L$HOMEBREW_PREFIX/opt/llvm@18/lib"
+    export CPPFLAGS="-I$HOMEBREW_PREFIX/opt/llvm@18/include"
+    mkdir -p build_dir/etc
+    make -C redis-8.0 -j "$(nproc)" all OS=macos
+    make -C redis-8.0 install PREFIX=$(pwd)/build_dir OS=macos
+    ```
+  </Step>
+  
+  <Step title="Run Redis">
+    ```bash
+    export LC_ALL=en_US.UTF-8
+    export LANG=en_US.UTF-8
+    build_dir/bin/redis-server redis-full.conf
+    ```
+  </Step>
+</Steps>
+
+## Build flags and options
+
+Redis supports various build flags to customize your installation:
+
+### Core build flags
+
+<CodeGroup>
+```bash All modules
+make BUILD_WITH_MODULES=yes
+```
+
+```bash TLS support
+make BUILD_TLS=yes
+```
+
+```bash Systemd support
+make USE_SYSTEMD=yes
+```
+
+```bash 32-bit binary
+make 32bit
+```
+</CodeGroup>
+
+<Note>
+`BUILD_WITH_MODULES=yes` enables JSON, time series, Bloom filter, cuckoo filter, count-min sketch, top-k, t-digest, and Redis Query Engine.
+</Note>
+
+### Build with all features
+
+To build Redis with all data structures and TLS support:
+
+```bash
+export BUILD_TLS=yes BUILD_WITH_MODULES=yes \
+  INSTALL_RUST_TOOLCHAIN=yes DISABLE_WERRORS=yes
+make -j "$(nproc)" all
+```
+
+### Custom allocator
+
+Redis uses jemalloc by default on Linux. To use a different allocator:
+
+<CodeGroup>
+```bash libc malloc
+make MALLOC=libc
+```
+
+```bash jemalloc (macOS)
+make MALLOC=jemalloc
+```
+</CodeGroup>
+
+### Verbose build output
+
+For detailed build information:
+
+```bash
+make V=1
+```
+
+## Testing your installation
+
+After building Redis, test it to ensure everything works correctly:
+
+<Steps>
+  <Step title="Run the test suite">
+    ```bash
+    make test
+    ```
+  </Step>
+  
+  <Step title="Test TLS (if enabled)">
+    If you built with TLS support:
+    
+    ```bash
+    ./utils/gen-test-certs.sh
+    ./runtest --tls
+    ```
+    
+    <Warning>
+    Requires `tcl-tls` to be installed.
+    </Warning>
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Clean build
+
+If you encounter build problems, perform a clean build:
+
+```bash
+make distclean
+```
+
+This will clean jemalloc, lua, hiredis, linenoise, and other dependencies.
+
+### 32-bit build issues
+
+If you have problems building a 32-bit binary:
+
+1. Install the package `libc6-dev-i386` (also try `g++-multilib`)
+2. Try using:
+   ```bash
+   make CFLAGS="-m32 -march=native" LDFLAGS="-m32"
+   ```
+
+### Switching architectures
+
+If you need to switch between 32-bit and 64-bit builds:
+
+```bash
+make distclean
+```
+
+## Platform support
+
+Redis can be compiled and used on:
+
+- Linux (recommended)
+- macOS (supported)
+- OpenBSD, NetBSD, FreeBSD (supported)
+- Solaris-derived systems like SmartOS (best effort)
+
+Redis supports both big-endian and little-endian architectures, and both 32-bit and 64-bit systems.
+
+<Note>
+32-bit systems do not support `BUILD_WITH_MODULES=yes`.
+</Note>
+
+## Advanced: Intel SVS-VAMANA optimizations
+
+For enhanced vector search performance with Redis Query Engine, you can enable Intel SVS-VAMANA optimizations (LeanVec and LVQ):
+
+```bash
+make BUILD_INTEL_SVS_OPT=yes
+```
+
+<Warning>
+**License Disclaimer**: Intel SVS optimizations are not compatible with AGPLv3 or SSPLv1. They are only available for use with Redis Open Source when distributed under the RSALv2 license. See [Intel SVS documentation](https://github.com/intel/ScalableVectorSearch) for details.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Start using Redis with basic commands
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="https://redis.io/docs/latest/operate/oss_and_stack/management/config/">
+    Configure Redis for your needs
+  </Card>
+  
+  <Card title="TLS Setup" icon="lock" href="https://github.com/redis/redis/blob/unstable/TLS.md">
+    Run Redis with TLS encryption
+  </Card>
+  
+  <Card title="Client Libraries" icon="code" href="https://redis.io/docs/latest/develop/clients/">
+    Connect your application to Redis
+  </Card>
+</CardGroup>

@@ -1,0 +1,249 @@
+---
+title: Request Pipelining
+description: Improve Redis performance with request pipelining
+---
+
+Request pipelining is a technique to dramatically improve Redis performance by sending multiple commands to the server without waiting for individual responses. This reduces network round-trip latency and increases throughput.
+
+## How Pipelining Works
+
+Without pipelining, each command follows this pattern:
+
+1. Client sends command
+2. Client waits for network round-trip
+3. Server processes command
+4. Client receives response
+5. Repeat for next command
+
+With pipelining, the client sends multiple commands in sequence without waiting:
+
+1. Client sends command 1
+2. Client sends command 2  
+3. Client sends command 3
+4. Client sends command N
+5. Client reads all responses in order
+
+The server processes commands as they arrive and queues responses, which the client reads in a batch.
+
+## Protocol Implementation
+
+Pipelining works naturally with the RESP protocol because:
+
+- Commands and responses are self-delimiting
+- The server processes commands in a queue (networking.c:172-175)
+- Responses are buffered in the client's output buffer (networking.c:213-217)
+- Multiple commands can be in the query buffer simultaneously
+
+### Query Buffer Processing
+
+When multiple pipelined commands arrive, they're stored in the client's query buffer (`c->querybuf`). The server processes them sequentially:
+
+```c
+// Pseudo-code from networking.c
+while (client has data in querybuf) {
+    parse_next_command();
+    execute_command();
+    write_response_to_output_buffer();
+}
+```
+
+The `processInputBuffer()` function handles this loop, parsing and executing commands one at a time from the buffer.
+
+## Performance Benefits
+
+### Latency Reduction
+
+Consider executing 10,000 commands with a 0.5ms network round-trip time:
+
+**Without pipelining:**
+- Time = 10,000 commands × 0.5ms = 5 seconds
+- Most time spent waiting for network
+
+**With pipelining (batches of 100):**
+- Time = 100 batches × 0.5ms = 50ms + processing time
+- **100x faster** for network-bound operations
+
+<Tip>
+Pipelining is most effective when network latency is high relative to command execution time. For localhost connections, the benefits are smaller but still measurable.
+</Tip>
+
+### Throughput Increase
+
+Pipelining also improves throughput by:
+
+1. **Reducing syscall overhead:** Fewer socket read/write operations
+2. **Better CPU utilization:** Server spends more time processing, less time waiting
+3. **Efficient buffer usage:** Batched operations use memory more efficiently
+
+The Redis benchmark tool uses pipelining extensively. With the `-P` flag, you can specify the pipeline size:
+
+```bash
+redis-benchmark -P 100 -q
+```
+
+## Pipelining Example
+
+Here's what pipelined commands look like at the protocol level:
+
+**Client sends (all at once):**
+```
+*2\r\n$3\r\nGET\r\n$4\r\nkey1\r\n*2\r\n$3\r\nGET\r\n$4\r\nkey2\r\n*2\r\n$3\r\nGET\r\n$4\r\nkey3\r\n
+```
+
+**Server responds (all at once):**
+```
+$6\r\nvalue1\r\n$6\r\nvalue2\r\n$6\r\nvalue3\r\n
+```
+
+Notice that:
+- All three commands are sent without waiting
+- Responses arrive in the same order as requests
+- The protocol format is identical to non-pipelined requests
+
+## Client Implementation Pattern
+
+A typical pipelining implementation in a client:
+
+```python
+# Pseudo-code
+def pipeline_commands(commands):
+    # 1. Send all commands
+    for cmd in commands:
+        socket.send(format_command(cmd))
+    
+    # 2. Read all responses
+    responses = []
+    for cmd in commands:
+        response = read_response(socket)
+        responses.append(response)
+    
+    return responses
+```
+
+<Note>
+Responses always arrive in the same order as requests. The server guarantees this ordering even when using pipelining.
+</Note>
+
+## Buffer Management
+
+The server manages pipelined commands through several buffer mechanisms:
+
+### Input Buffering
+
+Pipelined commands accumulate in the client's query buffer (`c->querybuf`). The buffer automatically grows to accommodate large pipelines, up to the configured limit.
+
+Constants from server.h:188-193:
+- `PROTO_IOBUF_LEN` (16KB) - Initial I/O buffer size
+- `PROTO_INLINE_MAX_SIZE` (64KB) - Maximum inline protocol size
+- `PROTO_MBULK_BIG_ARG` (32KB) - Large argument threshold
+
+### Output Buffering  
+
+Responses are queued in the client's output buffer. The server uses two mechanisms:
+
+1. **Static buffer** (`c->buf`) - Fast fixed-size buffer (networking.c:135)
+2. **Reply list** (`c->reply`) - Dynamic list for large responses (networking.c:213)
+
+The server automatically switches between these based on response size (networking.c:447-520).
+
+### Pending Write Queue
+
+Clients with pending output are placed in a write queue. Before returning to the event loop, the server attempts to flush these buffers synchronously (networking.c:282-299).
+
+If the complete response cannot be written immediately, a write handler is installed to continue when the socket becomes writable (networking.c:258-273).
+
+## Limitations and Considerations
+
+### Order Dependency
+
+Pipelining works best with independent commands. If later commands depend on earlier results, you cannot use pipelining effectively:
+
+```bash
+# Cannot pipeline these effectively:
+SET counter 0
+INCR counter     # Depends on SET succeeding
+GET counter      # Wants result of INCR
+```
+
+For dependent operations, consider using transactions (`MULTI`/`EXEC`) or Lua scripts.
+
+### Memory Usage
+
+Large pipelines consume memory for buffering:
+- Client query buffer holds incoming commands
+- Server output buffer holds pending responses
+
+The server has output buffer limits to prevent memory exhaustion. If a client's output buffer exceeds configured limits, the client is disconnected (networking.c:431).
+
+<Tip>
+Balance pipeline size against memory usage. Batches of 100-1000 commands typically provide excellent performance without excessive memory consumption.
+</Tip>
+
+### Timeout Behavior
+
+When pipelining many commands, be aware that:
+- The client timeout clock starts when the connection becomes idle
+- While processing a pipeline, the connection is not idle
+- Very large pipelines could trigger timeout if processing takes too long
+
+## Best Practices
+
+1. **Use moderate batch sizes:** 100-1000 commands per pipeline is usually optimal
+
+2. **Pipeline independent commands:** Commands that don't depend on each other's results
+
+3. **Handle partial failures:** Even in a pipeline, individual commands can fail. Check each response.
+
+4. **Monitor memory:** Large pipelines increase server memory usage temporarily
+
+5. **Consider transactions:** For related commands that must execute atomically, use `MULTI`/`EXEC` instead
+
+6. **Avoid blocking commands:** Don't pipeline blocking commands like `BLPOP` as they'll stall the pipeline
+
+## Pipelining in Redis Tools
+
+Redis's own tools demonstrate pipelining:
+
+### redis-benchmark
+
+The benchmark tool uses the `-P` flag to set pipeline depth (redis-benchmark.c:80, 1434-1435):
+
+```bash
+# Pipeline 16 requests at a time
+redis-benchmark -t SET,GET -P 16
+```
+
+### redis-cli with --pipe
+
+The `redis-cli --pipe` mode implements mass insertion using pipelining:
+
+```bash
+cat data.txt | redis-cli --pipe
+```
+
+This mode reads commands from stdin and pipelines them efficiently to the server.
+
+## Measuring Pipeline Performance
+
+To measure pipelining benefits:
+
+```bash
+# Without pipelining (P=1)
+redis-benchmark -t SET -n 100000 -q -P 1
+
+# With pipelining (P=100)  
+redis-benchmark -t SET -n 100000 -q -P 100
+```
+
+You'll typically see 10-50x throughput improvement depending on network latency and command complexity.
+
+## Implementation Notes
+
+The server's pipeline handling is integrated throughout the networking layer:
+
+- **Command parsing:** Loops through query buffer until exhausted (networking.c:2942-3048)
+- **Execution:** Each parsed command is executed immediately (processCommand)
+- **Response queueing:** Responses accumulate in output buffer (networking.c:485-520)
+- **Async writes:** Output is flushed asynchronously when socket is writable (networking.c:2783-2826)
+
+No special "pipeline mode" exists—the architecture naturally supports pipelining through proper buffer management and event-driven I/O.
