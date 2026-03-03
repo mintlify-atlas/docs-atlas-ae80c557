@@ -1,0 +1,167 @@
+{
+  "projectType": "data-platform",
+  "projectName": "Redis",
+  "projectDescription": "Fast, feature-rich in-memory data structure server for caching, databases, message brokers, and real-time applications",
+  "theme": "aspen",
+  "primaryColor": "#DC382D",
+  "lightColor": "#FF6B6B",
+  "darkColor": "#A81F17",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/data-persistence",
+              "concepts/memory-management",
+              "concepts/replication",
+              "concepts/clustering"
+            ]
+          },
+          {
+            "group": "Data Types",
+            "pages": [
+              "data-types/overview",
+              "data-types/strings",
+              "data-types/lists",
+              "data-types/sets",
+              "data-types/sorted-sets",
+              "data-types/hashes",
+              "data-types/streams",
+              "data-types/json",
+              "data-types/bitmaps",
+              "data-types/hyperloglogs",
+              "data-types/geospatial"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "features/pubsub",
+              "features/transactions",
+              "features/lua-scripting",
+              "features/query-engine",
+              "features/vector-search",
+              "features/time-series",
+              "features/probabilistic"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/security",
+              "operations/monitoring",
+              "operations/backup-restore",
+              "operations/performance-tuning",
+              "operations/tls"
+            ]
+          },
+          {
+            "group": "Client Libraries",
+            "pages": [
+              "clients/overview",
+              "clients/python",
+              "clients/javascript",
+              "clients/java",
+              "clients/go",
+              "clients/dotnet"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "commands/overview",
+              "commands/generic",
+              "commands/strings",
+              "commands/lists",
+              "commands/sets",
+              "commands/sorted-sets",
+              "commands/hashes",
+              "commands/streams",
+              "commands/pubsub",
+              "commands/server",
+              "commands/cluster",
+              "commands/scripting"
+            ]
+          },
+          {
+            "group": "Modules API",
+            "pages": [
+              "modules/overview",
+              "modules/getting-started",
+              "modules/data-types",
+              "modules/commands",
+              "modules/built-in-modules"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "protocol/resp-protocol",
+              "protocol/pipelining",
+              "protocol/client-protocol"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "In-memory data structure server with sub-millisecond latency",
+    "Rich data types: strings, lists, sets, sorted sets, hashes, streams, JSON, bitmaps, hyperloglogs, geospatial",
+    "Redis Query Engine for full-text search, vector search, and secondary indexing",
+    "Pub/Sub messaging and streaming with consumer groups",
+    "Clustering for horizontal scalability and high availability",
+    "Replication for data redundancy and read scalability",
+    "Persistence with RDB snapshots and AOF logging",
+    "Lua scripting and Redis Functions for server-side logic",
+    "TLS/SSL support for encrypted connections",
+    "ACL-based authentication and authorization",
+    "Module system for extending functionality",
+    "Time series, probabilistic data structures, and vector databases",
+    "Transactions and optimistic locking with WATCH/MULTI/EXEC",
+    "Built-in support for caching, session storage, queues, and real-time analytics"
+  ],
+  "publicApiSurface": [
+    "GET/SET - String operations",
+    "LPUSH/RPUSH/LPOP/RPOP - List operations",
+    "SADD/SMEMBERS/SINTER - Set operations",
+    "ZADD/ZRANGE/ZRANK - Sorted set operations",
+    "HSET/HGET/HGETALL - Hash operations",
+    "XADD/XREAD/XGROUP - Stream operations",
+    "PUBLISH/SUBSCRIBE - Pub/Sub messaging",
+    "JSON.SET/JSON.GET - JSON operations",
+    "FT.CREATE/FT.SEARCH - Search and query",
+    "GEOADD/GEORADIUS - Geospatial operations",
+    "PFADD/PFCOUNT - HyperLogLog operations",
+    "EVAL/EVALSHA - Lua script execution",
+    "MULTI/EXEC/WATCH - Transactions",
+    "CLUSTER NODES/SLOTS - Cluster management",
+    "REPLICAOF/INFO REPLICATION - Replication",
+    "CONFIG GET/SET - Configuration",
+    "ACL SETUSER/GETUSER - Access control",
+    "BGSAVE/BGREWRITEAOF - Persistence",
+    "MODULE LOAD/LIST - Module management",
+    "redis-cli - Command-line interface",
+    "redis-server - Server executable",
+    "redis-benchmark - Performance testing",
+    "redis-sentinel - High availability"
+  ]
+}
